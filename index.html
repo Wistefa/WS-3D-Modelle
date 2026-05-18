@@ -5,9 +5,9 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>FORM3D — Photogrammetrie Studio</title>
 <link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/controls/OrbitControls.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/loaders/STLLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
 <style>
  :root {
    --bg: #0a0b0f;
@@ -1514,18 +1514,20 @@ function hideThreeViewer() {
 
 async function loadModelFile() {
   log('info', '[3D-VIEWER] Modell wird geladen...');
-  // Versuche Auto-Load aus Projektordner
-  try {
-    const resp = await fetch('./bali_guardian.stl');
-    if (resp.ok) {
-      const buf = await resp.arrayBuffer();
-      showThreeViewer();
-      loadSTLBuffer(buf, 'bali_guardian.stl');
-      return;
-    }
-  } catch (e) {}
+  // fetch() funktioniert nur über http:// — bei file:// direkt zum Picker
+  if (location.protocol !== 'file:') {
+    try {
+      const resp = await fetch('./bali_guardian.stl');
+      if (resp.ok) {
+        const buf = await resp.arrayBuffer();
+        showThreeViewer();
+        loadSTLBuffer(buf, 'bali_guardian.stl');
+        return;
+      }
+    } catch (e) {}
+  }
   // Fallback: Datei-Dialog
-  log('info', '[3D-VIEWER] Bitte STL-Datei auswählen...');
+  log('info', '[3D-VIEWER] Bitte STL- oder OBJ-Datei auswählen...');
   $('modelFileInput').click();
 }
 
