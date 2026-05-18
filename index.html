@@ -411,6 +411,52 @@ header {
   transition: border-color .15s, color .15s;
 }
 .btn-reset:hover { border-color: var(--muted); color: var(--text); }
+.btn-snapshot {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--accent3);
+  color: var(--accent3);
+  font-family: inherit;
+  font-size: 11px;
+  letter-spacing: 1px;
+  padding: 7px;
+  cursor: pointer;
+  transition: background .15s;
+  margin-bottom: 4px;
+}
+.btn-snapshot:hover:not(:disabled) { background: rgba(168,255,62,.06); }
+.btn-snapshot:disabled { opacity: 0.3; cursor: not-allowed; }
+.snapshot-list { margin-top: 2px; }
+.snapshot-item {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 11px;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--border);
+}
+.snapshot-item:last-child { border-bottom: none; }
+.snap-label { flex: 1; color: var(--text); }
+.snap-load {
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 10px;
+  padding: 2px 6px;
+  cursor: pointer;
+}
+.snap-load:hover { background: rgba(0,229,255,.08); }
+.snap-del {
+  background: transparent;
+  border: none;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 0 3px;
+  cursor: pointer;
+  line-height: 1;
+}
+.snap-del:hover { color: #ff4444; }
 
 /* ── Boden-Trim ──────────────────────────────────── */
 .trim-block {
@@ -596,6 +642,10 @@ input[type=file] { display: none; }
       <button class="btn-reset" id="btnReset" onclick="resetOptimizations()" style="display:none">
         ORIGINAL WIEDERHERSTELLEN
       </button>
+      <button class="btn-snapshot" id="btnSnapshot" onclick="saveSnapshot()" disabled>
+        SNAPSHOT SPEICHERN
+      </button>
+      <div class="snapshot-list" id="snapshotList"></div>
     </div>
 
     <div class="export-block">
@@ -628,11 +678,63 @@ let autoRotate = true;
 
 // ── Mesh-Optimierung ────────────────────────────────────────────────
 let origGeo = null; // unverändertes Original (aus STL-Datei)
+const snapshots = [];
 
 function enableOptControls() {
   document.getElementById('decimateSlider').disabled = false;
   document.getElementById('smoothSlider').disabled   = false;
   document.getElementById('btnApply').disabled       = false;
+  document.getElementById('btnSnapshot').disabled    = false;
+}
+
+function saveSnapshot() {
+  if (!T.mesh) return;
+  const geo    = T.mesh.geometry.clone();
+  const polys  = geo.index
+    ? Math.round(geo.index.count / 3)
+    : Math.round(geo.attributes.position.count / 3);
+  const origPolys = origGeo ? Math.round(origGeo.attributes.position.count / 3) : polys;
+  const pct    = Math.round((1 - polys / origPolys) * 100);
+  const label  = `${polys.toLocaleString('de-DE')} Polys${pct > 0 ? ' (−' + pct + '%)' : ''}`;
+  snapshots.push({ geo, label });
+  renderSnapshotList();
+}
+
+function loadSnapshot(idx) {
+  if (!snapshots[idx]) return;
+  T.mesh.geometry.dispose();
+  T.mesh.geometry = snapshots[idx].geo.clone();
+  T.mesh.geometry.computeVertexNormals();
+  const polys = T.mesh.geometry.index
+    ? Math.round(T.mesh.geometry.index.count / 3)
+    : Math.round(T.mesh.geometry.attributes.position.count / 3);
+  document.getElementById('hudPoly').textContent      = polys.toLocaleString('de-DE');
+  document.getElementById('infoPoly').textContent     = polys.toLocaleString('de-DE');
+  document.getElementById('hdrPolyCount').textContent = polys.toLocaleString('de-DE') + ' POLY';
+  T.mesh.updateMatrixWorld(true);
+  const wb = new THREE.Box3().setFromObject(T.mesh);
+  modelMinY = wb.min.y; modelMaxY = wb.max.y;
+  updatePrintSize();
+  document.getElementById('btnReset').style.display = '';
+  setOptStatus(`Snapshot ${idx + 1} geladen`);
+}
+
+function deleteSnapshot(idx) {
+  snapshots[idx].geo.dispose();
+  snapshots.splice(idx, 1);
+  renderSnapshotList();
+}
+
+function renderSnapshotList() {
+  const list = document.getElementById('snapshotList');
+  if (snapshots.length === 0) { list.innerHTML = ''; return; }
+  list.innerHTML = snapshots.map((s, i) => `
+    <div class="snapshot-item">
+      <span class="snap-label">${i + 1}. ${s.label}</span>
+      <button class="snap-load" onclick="loadSnapshot(${i})">LADEN</button>
+      <button class="snap-del" onclick="deleteSnapshot(${i})">&#215;</button>
+    </div>
+  `).join('');
 }
 
 function setOptStatus(msg) {
@@ -747,7 +849,7 @@ function applyOptimizations() {
   if (!origGeo) return;
   const decimatePct = parseInt(document.getElementById('decimateSlider').value);
   const smoothIter  = parseInt(document.getElementById('smoothSlider').value);
-  if (decimatePct === 0 && smoothIter === 0) { setOptStatus('Keine Einstellungen gewählt.'); return; }
+  if (decimatePct === 0 && smoothIter === 0) { resetOptimizations(); return; }
 
   document.getElementById('btnApply').disabled = true;
   setOptStatus('Vertices werden zusammengeführt...');
