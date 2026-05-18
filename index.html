@@ -296,6 +296,60 @@ header {
 .export-btn .fmt { font-size: 13px; font-weight: 700; letter-spacing: 1px; }
 .export-btn .desc { color: var(--muted); font-size: 11px; }
 
+/* ── Druckgröße ──────────────────────────────────── */
+.size-block {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.size-block .block-title {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.size-input-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.size-input-row label { color: var(--muted); white-space: nowrap; }
+.size-input-row input[type=number] {
+  flex: 1;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--accent3);
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 700;
+  padding: 6px 8px;
+  text-align: right;
+  width: 0;
+  -moz-appearance: textfield;
+}
+.size-input-row input[type=number]::-webkit-inner-spin-button { opacity: 0.4; }
+.size-input-row input[type=number]:focus {
+  outline: none;
+  border-color: var(--accent3);
+}
+.size-input-row input:disabled { opacity: 0.35; }
+.size-input-row span { color: var(--muted); }
+.size-dims {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 4px;
+  margin-top: 4px;
+}
+.size-dim {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  padding: 6px 8px;
+  text-align: center;
+}
+.size-dim .dim-label { color: var(--muted); font-size: 10px; display: block; }
+.size-dim .dim-val   { color: var(--text); font-size: 13px; font-weight: 700; }
+.size-dim.active .dim-val { color: var(--accent3); }
+
 /* ── Boden-Trim ──────────────────────────────────── */
 .trim-block {
   padding: 12px 14px;
@@ -428,6 +482,21 @@ input[type=file] { display: none; }
       <button class="btn-load" onclick="pickModel()">⬡ MODELL LADEN</button>
     </div>
 
+    <div class="size-block">
+      <div class="block-title">DRUCKGRÖSSE</div>
+      <div class="size-input-row">
+        <label>Höhe</label>
+        <input type="number" id="printHeight" min="5" max="999" placeholder="100"
+               oninput="updatePrintSize()" disabled>
+        <span>mm</span>
+      </div>
+      <div class="size-dims">
+        <div class="size-dim"><span class="dim-label">BREITE</span><span class="dim-val" id="dimW">—</span></div>
+        <div class="size-dim"><span class="dim-label">TIEFE</span><span class="dim-val" id="dimD">—</span></div>
+        <div class="size-dim active"><span class="dim-label">HÖHE</span><span class="dim-val" id="dimH">—</span></div>
+      </div>
+    </div>
+
     <div class="trim-block">
       <div class="block-title">BODEN ENTFERNEN</div>
       <div class="trim-row">
@@ -468,6 +537,49 @@ const T = {};
 let wireframe = false;
 let autoRotate = true;
 
+// ── Druckgröße ──────────────────────────────────────────────────────
+let rawW = 0, rawD = 0, rawH = 0; // originale STL-Maße in STL-Einheiten
+
+function updatePrintSize() {
+  const inp = document.getElementById('printHeight');
+  const h   = parseFloat(inp.value);
+  if (!h || h <= 0 || !T.mesh) {
+    ['dimW','dimD','dimH'].forEach(id => document.getElementById(id).textContent = '—');
+    return;
+  }
+
+  let visH, visW, visD;
+
+  if (clipCutY > -1e9) {
+    // Nur sichtbare Vertices (oberhalb der Schnittlinie) scannen
+    const pos = T.mesh.geometry.attributes.position;
+    T.mesh.updateMatrixWorld(true);
+    const mat4 = T.mesh.matrixWorld;
+    let minX=Infinity, maxX=-Infinity, minZ=Infinity, maxZ=-Infinity, maxY=-Infinity;
+    const v = new THREE.Vector3();
+    for (let i = 0; i < pos.count; i++) {
+      v.fromBufferAttribute(pos, i).applyMatrix4(mat4);
+      if (v.y < clipCutY) continue;
+      if (v.x < minX) minX = v.x; if (v.x > maxX) maxX = v.x;
+      if (v.z < minZ) minZ = v.z; if (v.z > maxZ) maxZ = v.z;
+      if (v.y > maxY) maxY = v.y;
+    }
+    visH = maxY - clipCutY;
+    visW = maxX - minX;
+    visD = maxZ - minZ;
+  } else {
+    // Proportionen aus Rohmaßen
+    visH = modelMaxY - modelMinY;
+    visW = rawW / rawH * visH;
+    visD = rawD / rawH * visH;
+  }
+
+  const scale = h / visH;
+  document.getElementById('dimW').textContent = Math.round(visW * scale) + ' mm';
+  document.getElementById('dimD').textContent = Math.round(visD * scale) + ' mm';
+  document.getElementById('dimH').textContent = Math.round(h) + ' mm';
+}
+
 // ── Boden-Clip ──────────────────────────────────────────────────────
 let modelMinY = 0, modelMaxY = 0, clipCutY = -Infinity;
 const clipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
@@ -484,6 +596,7 @@ function onTrimSlider(val) {
     clipPlane.constant = -clipCutY;
     T.renderer.clippingPlanes = [clipPlane];
   }
+  updatePrintSize();
 }
 
 // Sutherland-Hodgman Dreieck-Clip gegen y >= cutY
@@ -639,6 +752,11 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   const geo = new THREE.STLLoader().parse(buffer);
   geo.computeVertexNormals();
 
+  // Rohmaße aus dem STL (vor Skalierung) — für Druckgröße-Berechnung
+  const rawBox  = new THREE.Box3().setFromBufferAttribute(geo.attributes.position);
+  const rawSize = rawBox.getSize(new THREE.Vector3());
+  rawW = rawSize.x; rawD = rawSize.z; rawH = rawSize.y;
+
   const mat  = new THREE.MeshPhongMaterial({ color: 0x9a8b7a, specular: 0x222222, shininess: 30 });
   T.mesh = new THREE.Mesh(geo, mat);
 
@@ -662,6 +780,12 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   document.getElementById('trimSlider').disabled = false;
   document.getElementById('trimVal').textContent = '0%';
   document.getElementById('btnTrimExport').disabled = false;
+
+  // Druckgröße aktivieren und mit 100 mm vorbelegen
+  const inp = document.getElementById('printHeight');
+  inp.disabled = false;
+  inp.value = 100;
+  updatePrintSize();
 
   const polys = Math.round(geo.attributes.position.count / 3);
   const verts = geo.attributes.position.count;
