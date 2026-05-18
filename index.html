@@ -296,6 +296,45 @@ header {
 .export-btn .fmt { font-size: 13px; font-weight: 700; letter-spacing: 1px; }
 .export-btn .desc { color: var(--muted); font-size: 11px; }
 
+/* ── Boden-Trim ──────────────────────────────────── */
+.trim-block {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.trim-block .block-title {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.trim-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.trim-row input[type=range] {
+  flex: 1;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+.trim-row input[type=range]:disabled { opacity: 0.3; cursor: not-allowed; }
+.trim-val { color: var(--accent2); min-width: 32px; text-align: right; }
+.btn-trim-export {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--accent2);
+  color: var(--accent2);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 10px;
+  cursor: pointer;
+  transition: background .15s;
+}
+.btn-trim-export:hover { background: rgba(255,107,53,.08); }
+.btn-trim-export:disabled { opacity: 0.3; cursor: not-allowed; }
+
 /* ── Utility ─────────────────────────────────────── */
 input[type=file] { display: none; }
 </style>
@@ -389,6 +428,18 @@ input[type=file] { display: none; }
       <button class="btn-load" onclick="pickModel()">⬡ MODELL LADEN</button>
     </div>
 
+    <div class="trim-block">
+      <div class="block-title">BODEN ENTFERNEN</div>
+      <div class="trim-row">
+        <input type="range" id="trimSlider" min="0" max="100" value="0" step="1"
+               oninput="onTrimSlider(this.value)" disabled>
+        <span class="trim-val" id="trimVal">0%</span>
+      </div>
+      <button class="btn-trim-export" id="btnTrimExport" onclick="exportTrimmedSTL()" disabled>
+        BEREINIGT HERUNTERLADEN
+      </button>
+    </div>
+
     <div class="export-block">
       <div class="block-title">EXPORT / DOWNLOAD</div>
       <a class="export-btn" id="dlSTL" href="bali_guardian.stl" download="bali_guardian.stl">
@@ -416,6 +467,87 @@ input[type=file] { display: none; }
 const T = {};
 let wireframe = false;
 let autoRotate = true;
+
+// ── Boden-Clip ──────────────────────────────────────────────────────
+let modelMinY = 0, modelMaxY = 0, clipCutY = -Infinity;
+const clipPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
+
+function onTrimSlider(val) {
+  const pct = parseInt(val);
+  document.getElementById('trimVal').textContent = pct + '%';
+  if (pct === 0) {
+    clipCutY = -Infinity;
+    T.renderer.clippingPlanes = [];
+  } else {
+    // max 60% der Modellhöhe von unten
+    clipCutY = modelMinY + (modelMaxY - modelMinY) * (pct / 166.7);
+    clipPlane.constant = -clipCutY;
+    T.renderer.clippingPlanes = [clipPlane];
+  }
+}
+
+// Sutherland-Hodgman Dreieck-Clip gegen y >= cutY
+function clipTriangle(v0, v1, v2, cutY) {
+  if (cutY <= -1e9) return [[v0, v1, v2]];
+  const verts = [v0, v1, v2];
+  const above = verts.map(v => v.y >= cutY);
+  const cnt   = above.filter(Boolean).length;
+  if (cnt === 3) return [[v0, v1, v2]];
+  if (cnt === 0) return [];
+  function ix(p, q) {
+    const t = (cutY - p.y) / (q.y - p.y);
+    return new THREE.Vector3(p.x + t*(q.x-p.x), cutY, p.z + t*(q.z-p.z));
+  }
+  if (cnt === 1) {
+    const i = above.indexOf(true);
+    const [a, b, c] = [verts[i], verts[(i+1)%3], verts[(i+2)%3]];
+    return [[a, ix(a, b), ix(c, a)]];
+  }
+  // cnt === 2
+  const i = above.indexOf(false);
+  const [bot, t1, t2] = [verts[i], verts[(i+1)%3], verts[(i+2)%3]];
+  const i1 = ix(bot, t1), i2 = ix(t2, bot);
+  return [[i1, t1, t2], [i1, t2, i2]];
+}
+
+function exportTrimmedSTL() {
+  if (!T.mesh) return;
+  const geo    = T.mesh.geometry;
+  const pos    = geo.attributes.position;
+  T.mesh.updateMatrixWorld(true);
+  const matrix = T.mesh.matrixWorld;
+
+  const triangles = [];
+  const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
+  for (let i = 0; i < pos.count; i += 3) {
+    vA.fromBufferAttribute(pos, i).applyMatrix4(matrix);
+    vB.fromBufferAttribute(pos, i+1).applyMatrix4(matrix);
+    vC.fromBufferAttribute(pos, i+2).applyMatrix4(matrix);
+    for (const tri of clipTriangle(vA.clone(), vB.clone(), vC.clone(), clipCutY)) {
+      triangles.push(tri);
+    }
+  }
+
+  const buf  = new ArrayBuffer(84 + triangles.length * 50);
+  const view = new DataView(buf);
+  view.setUint32(80, triangles.length, true);
+  let off = 84;
+  const e1 = new THREE.Vector3(), e2 = new THREE.Vector3(), n = new THREE.Vector3();
+  for (const [a, b, c] of triangles) {
+    e1.copy(b).sub(a); e2.copy(c).sub(a);
+    n.copy(e1).cross(e2).normalize();
+    for (const x of [n.x,n.y,n.z, a.x,a.y,a.z, b.x,b.y,b.z, c.x,c.y,c.z]) {
+      view.setFloat32(off, x, true); off += 4;
+    }
+    view.setUint16(off, 0, true); off += 2;
+  }
+  const blob = new Blob([buf], { type: 'application/octet-stream' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'bali_guardian_bereinigt.stl';
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
 
 function initThree() {
   const canvas = document.getElementById('threeCanvas');
@@ -519,6 +651,17 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   T.mesh.position.sub(center);
 
   T.scene.add(T.mesh);
+
+  // Welt-Bounds für Clip-Slider
+  T.mesh.updateMatrixWorld(true);
+  const wb = new THREE.Box3().setFromObject(T.mesh);
+  modelMinY = wb.min.y; modelMaxY = wb.max.y;
+  clipCutY  = -Infinity;
+  T.renderer.clippingPlanes = [];
+  document.getElementById('trimSlider').value    = 0;
+  document.getElementById('trimSlider').disabled = false;
+  document.getElementById('trimVal').textContent = '0%';
+  document.getElementById('btnTrimExport').disabled = false;
 
   const polys = Math.round(geo.attributes.position.count / 3);
   const verts = geo.attributes.position.count;
