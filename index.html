@@ -11,14 +11,14 @@
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
-  --bg:      #0a0b0f;
-  --surface: #111318;
-  --border:  #1e2330;
+  --bg:      #161820;
+  --surface: #1e2130;
+  --border:  #2e3550;
   --accent:  #00e5ff;
   --accent2: #ff6b35;
   --accent3: #a8ff3e;
-  --text:    #c8d0e0;
-  --muted:   #4a5568;
+  --text:    #e2e8f8;
+  --muted:   #8899bb;
 }
 
 body {
@@ -48,8 +48,8 @@ header {
   letter-spacing: 3px;
   color: var(--accent);
 }
-.logo span { color: var(--text); opacity: 0.4; }
-.header-meta { margin-left: auto; display: flex; gap: 24px; opacity: 0.5; }
+.logo span { color: var(--text); opacity: 0.6; }
+.header-meta { margin-left: auto; display: flex; gap: 24px; opacity: 0.75; }
 
 /* ── Layout ──────────────────────────────────────── */
 .layout {
@@ -70,7 +70,7 @@ header {
   padding: 10px 14px;
   font-size: 10px;
   letter-spacing: 2px;
-  color: var(--muted);
+  color: var(--accent);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
 }
@@ -121,7 +121,7 @@ header {
 .photo-count {
   padding: 8px 14px;
   border-top: 1px solid var(--border);
-  color: var(--muted);
+  color: var(--text);
   flex-shrink: 0;
 }
 .photo-count b { color: var(--accent); }
@@ -129,7 +129,7 @@ header {
 /* ── Center: 3D Viewer ───────────────────────────── */
 .panel-viewer {
   position: relative;
-  background: #080a0d;
+  background: #0e1018;
   overflow: hidden;
 }
 
@@ -160,10 +160,10 @@ header {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-.loader-text { color: var(--muted); letter-spacing: 2px; }
+.loader-text { color: var(--text); letter-spacing: 2px; }
 
 .no-model-msg {
-  color: var(--muted);
+  color: var(--text);
   text-align: center;
   line-height: 2;
 }
@@ -188,9 +188,10 @@ header {
   position: absolute;
   bottom: 14px;
   right: 14px;
-  color: var(--muted);
+  color: var(--text);
   font-size: 10px;
   pointer-events: none;
+  opacity: 0.7;
 }
 
 .viewer-controls {
@@ -202,13 +203,13 @@ header {
   gap: 6px;
 }
 .ctrl-btn {
-  background: rgba(10,11,15,.8);
+  background: rgba(22,24,32,.9);
   border: 1px solid var(--border);
   color: var(--text);
   font-family: inherit;
-  font-size: 10px;
+  font-size: 11px;
   letter-spacing: 1px;
-  padding: 6px 10px;
+  padding: 7px 12px;
   cursor: pointer;
   transition: border-color .15s, color .15s;
 }
@@ -421,7 +422,7 @@ function initThree() {
   const container = canvas.parentElement;
 
   T.scene    = new THREE.Scene();
-  T.scene.background = new THREE.Color(0x080a0d);
+  T.scene.background = new THREE.Color(0x0e1018);
 
   T.camera   = new THREE.PerspectiveCamera(45, 1, 0.1, 10000);
 
