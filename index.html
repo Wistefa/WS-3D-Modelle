@@ -7,6 +7,7 @@
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/STLLoader.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/utils/BufferGeometryUtils.js"></script>
 <style>
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
@@ -350,6 +351,67 @@ header {
 .size-dim .dim-val   { color: var(--text); font-size: 13px; font-weight: 700; }
 .size-dim.active .dim-val { color: var(--accent3); }
 
+/* ── Mesh-Optimierung ────────────────────────────── */
+.opt-block {
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.opt-block .block-title {
+  font-size: 12px;
+  letter-spacing: 2px;
+  color: var(--accent);
+  margin-bottom: 10px;
+}
+.opt-row { margin-bottom: 8px; }
+.opt-label {
+  display: flex;
+  justify-content: space-between;
+  margin-bottom: 4px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.opt-val { color: var(--accent2); font-weight: 700; }
+.opt-row input[type=range] {
+  width: 100%;
+  accent-color: var(--accent2);
+  cursor: pointer;
+}
+.opt-row input[type=range]:disabled { opacity: 0.3; cursor: not-allowed; }
+.opt-status {
+  font-size: 11px;
+  color: var(--accent3);
+  min-height: 16px;
+  margin-bottom: 6px;
+  letter-spacing: 1px;
+}
+.btn-apply {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--accent);
+  color: var(--accent);
+  font-family: inherit;
+  font-size: 12px;
+  letter-spacing: 1px;
+  padding: 9px;
+  cursor: pointer;
+  transition: background .15s;
+  margin-bottom: 5px;
+}
+.btn-apply:hover:not(:disabled) { background: rgba(0,229,255,.08); }
+.btn-apply:disabled { opacity: 0.3; cursor: not-allowed; }
+.btn-reset {
+  width: 100%;
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--muted);
+  font-family: inherit;
+  font-size: 11px;
+  padding: 7px;
+  cursor: pointer;
+  transition: border-color .15s, color .15s;
+}
+.btn-reset:hover { border-color: var(--muted); color: var(--text); }
+
 /* ── Boden-Trim ──────────────────────────────────── */
 .trim-block {
   padding: 12px 14px;
@@ -509,6 +571,33 @@ input[type=file] { display: none; }
       </button>
     </div>
 
+    <div class="opt-block">
+      <div class="block-title">MESH-OPTIMIERUNG</div>
+      <div class="opt-row">
+        <div class="opt-label">
+          <span>POLYGON-REDUKTION</span>
+          <span class="opt-val" id="decimateVal">0%</span>
+        </div>
+        <input type="range" id="decimateSlider" min="0" max="90" value="0" step="5" disabled
+               oninput="document.getElementById('decimateVal').textContent=this.value+'%'">
+      </div>
+      <div class="opt-row">
+        <div class="opt-label">
+          <span>GLÄTTUNG</span>
+          <span class="opt-val" id="smoothVal">0</span>
+        </div>
+        <input type="range" id="smoothSlider" min="0" max="5" value="0" step="1" disabled
+               oninput="document.getElementById('smoothVal').textContent=this.value">
+      </div>
+      <div class="opt-status" id="optStatus"></div>
+      <button class="btn-apply" id="btnApply" onclick="applyOptimizations()" disabled>
+        ANWENDEN
+      </button>
+      <button class="btn-reset" id="btnReset" onclick="resetOptimizations()" style="display:none">
+        ORIGINAL WIEDERHERSTELLEN
+      </button>
+    </div>
+
     <div class="export-block">
       <div class="block-title">EXPORT / DOWNLOAD</div>
       <a class="export-btn" id="dlSTL" href="bali_guardian.stl" download="bali_guardian.stl">
@@ -536,6 +625,203 @@ input[type=file] { display: none; }
 const T = {};
 let wireframe = false;
 let autoRotate = true;
+
+// ── Mesh-Optimierung ────────────────────────────────────────────────
+let origGeo = null; // unverändertes Original (aus STL-Datei)
+
+function enableOptControls() {
+  document.getElementById('decimateSlider').disabled = false;
+  document.getElementById('smoothSlider').disabled   = false;
+  document.getElementById('btnApply').disabled       = false;
+}
+
+function setOptStatus(msg) {
+  document.getElementById('optStatus').textContent = msg;
+}
+
+// Laplacian Smoothing auf indizierter Geometrie
+function smoothGeometry(geo, iterations, strength) {
+  const pos = geo.attributes.position;
+  const idx = geo.index.array;
+  const n   = pos.count;
+
+  // Adjazenz aufbauen
+  const adj = [];
+  for (let i = 0; i < n; i++) adj.push([]);
+  for (let i = 0; i < idx.length; i += 3) {
+    const a=idx[i], b=idx[i+1], c=idx[i+2];
+    adj[a].push(b,c); adj[b].push(a,c); adj[c].push(a,b);
+  }
+  // Duplikate entfernen
+  for (let i = 0; i < n; i++) adj[i] = [...new Set(adj[i])];
+
+  const nx = new Float32Array(n);
+  const ny = new Float32Array(n);
+  const nz = new Float32Array(n);
+
+  for (let iter = 0; iter < iterations; iter++) {
+    for (let i = 0; i < n; i++) {
+      const ns = adj[i];
+      if (!ns.length) { nx[i]=pos.getX(i); ny[i]=pos.getY(i); nz[i]=pos.getZ(i); continue; }
+      let cx=0, cy=0, cz=0;
+      for (const j of ns) { cx+=pos.getX(j); cy+=pos.getY(j); cz+=pos.getZ(j); }
+      const cnt = ns.length;
+      nx[i] = pos.getX(i) + strength * (cx/cnt - pos.getX(i));
+      ny[i] = pos.getY(i) + strength * (cy/cnt - pos.getY(i));
+      nz[i] = pos.getZ(i) + strength * (cz/cnt - pos.getZ(i));
+    }
+    for (let i = 0; i < n; i++) pos.setXYZ(i, nx[i], ny[i], nz[i]);
+    pos.needsUpdate = true;
+  }
+  geo.computeVertexNormals();
+}
+
+// Voxel-Grid Decimation: Vertices in Gitterzellen zusammenführen
+// geo muss bereits indiziert sein (nach mergeVertices) damit pos.count = echte unique Vertices
+function decimateVoxelGrid(geo, keepRatio) {
+  const pos    = geo.attributes.position;
+  const n      = pos.count;
+  const srcIdx = geo.index.array;
+  const triCount = srcIdx.length / 3;
+
+  // Lokale Bounding Box
+  const box   = new THREE.Box3().setFromBufferAttribute(pos);
+  const sz    = box.getSize(new THREE.Vector3());
+
+  // Durchschnittliche Kantenlänge aus ~500 Stichproben-Dreiecken schätzen
+  // (innerhalb eines Dreiecks sind alle 3 Kanten repräsentativ, keine Duplikate)
+  const step = Math.max(1, Math.floor(triCount / 500));
+  let edgeSum = 0, edgeCnt = 0;
+  const _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _vc = new THREE.Vector3();
+  for (let t = 0; t < triCount; t += step) {
+    _va.fromBufferAttribute(pos, srcIdx[t*3]);
+    _vb.fromBufferAttribute(pos, srcIdx[t*3+1]);
+    _vc.fromBufferAttribute(pos, srcIdx[t*3+2]);
+    edgeSum += _va.distanceTo(_vb) + _vb.distanceTo(_vc) + _vc.distanceTo(_va);
+    edgeCnt += 3;
+  }
+  const avgEdge = edgeSum / edgeCnt;
+
+  // cell = avgEdge / sqrt(keepRatio): bei keepRatio=0.5 → ca. 50% der Polys bleiben
+  const cell = Math.max(avgEdge / Math.sqrt(keepRatio), 1e-9);
+
+  // Vertex → Voxel (string-key für Überlaufsicherheit)
+  const voxelMap = new Map();
+  for (let i = 0; i < n; i++) {
+    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+    const key = `${Math.floor((x-box.min.x)/cell)},${Math.floor((y-box.min.y)/cell)},${Math.floor((z-box.min.z)/cell)}`;
+    if (!voxelMap.has(key)) voxelMap.set(key, {sx:0,sy:0,sz:0,cnt:0,idx:voxelMap.size});
+    const v=voxelMap.get(key); v.sx+=x; v.sy+=y; v.sz+=z; v.cnt++;
+  }
+
+  // Neue Positionen (Voxel-Schwerpunkte)
+  const newPosArr = new Float32Array(voxelMap.size * 3);
+  for (const v of voxelMap.values()) {
+    const i3=v.idx*3;
+    newPosArr[i3]=v.sx/v.cnt; newPosArr[i3+1]=v.sy/v.cnt; newPosArr[i3+2]=v.sz/v.cnt;
+  }
+
+  // Mapping: alter Index → neuer Voxel-Index
+  const vtx2vox = new Int32Array(n);
+  for (let i = 0; i < n; i++) {
+    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
+    const key=`${Math.floor((x-box.min.x)/cell)},${Math.floor((y-box.min.y)/cell)},${Math.floor((z-box.min.z)/cell)}`;
+    vtx2vox[i]=voxelMap.get(key).idx;
+  }
+
+  // Dreiecke aufbauen, degenerierte überspringen
+  const newIdx = [];
+  for (let t = 0; t < triCount; t++) {
+    const na=vtx2vox[srcIdx[t*3]], nb=vtx2vox[srcIdx[t*3+1]], nc=vtx2vox[srcIdx[t*3+2]];
+    if (na!==nb && nb!==nc && na!==nc) newIdx.push(na,nb,nc);
+  }
+
+  const newGeo = new THREE.BufferGeometry();
+  newGeo.setAttribute('position', new THREE.BufferAttribute(newPosArr, 3));
+  newGeo.setIndex(newIdx);
+  newGeo.computeVertexNormals();
+  return newGeo;
+}
+
+function applyOptimizations() {
+  if (!origGeo) return;
+  const decimatePct = parseInt(document.getElementById('decimateSlider').value);
+  const smoothIter  = parseInt(document.getElementById('smoothSlider').value);
+  if (decimatePct === 0 && smoothIter === 0) { setOptStatus('Keine Einstellungen gewählt.'); return; }
+
+  document.getElementById('btnApply').disabled = true;
+  setOptStatus('Vertices werden zusammengeführt...');
+
+  setTimeout(() => {
+    try {
+      // 1. Merge: nicht-indizierte STL → indizierte Geometrie
+      let geo = THREE.BufferGeometryUtils.mergeVertices(origGeo.clone(), 1e-4);
+
+      // 2. Glätten
+      if (smoothIter > 0) {
+        setOptStatus(`Glättung läuft (${smoothIter} Durchläufe)...`);
+        smoothGeometry(geo, smoothIter, 0.5);
+      }
+
+      // 3. Dezimieren (Voxel-Grid)
+      if (decimatePct > 0) {
+        setOptStatus(`Polygon-Reduktion auf ${100-decimatePct}%...`);
+        geo = decimateVoxelGrid(geo, 1 - decimatePct / 100);
+      }
+
+      // 4. Mesh austauschen
+      T.mesh.geometry.dispose();
+      T.mesh.geometry = geo;
+
+      // 5. Neue Poly-Zahl ermitteln
+      const newPolys = geo.index
+        ? Math.round(geo.index.count / 3)
+        : Math.round(geo.attributes.position.count / 3);
+      const origPolys = Math.round(origGeo.attributes.position.count / 3);
+
+      document.getElementById('hudPoly').textContent  = newPolys.toLocaleString('de-DE');
+      document.getElementById('infoPoly').textContent = newPolys.toLocaleString('de-DE');
+      document.getElementById('hdrPolyCount').textContent = newPolys.toLocaleString('de-DE') + ' POLY';
+
+      // Bounding-Box neu berechnen
+      T.mesh.updateMatrixWorld(true);
+      const wb = new THREE.Box3().setFromObject(T.mesh);
+      modelMinY = wb.min.y; modelMaxY = wb.max.y;
+      updatePrintSize();
+
+      const pct = Math.round((1 - newPolys/origPolys) * 100);
+      setOptStatus(`✓ ${newPolys.toLocaleString('de-DE')} Polys (−${pct}%)`);
+      document.getElementById('btnReset').style.display = '';
+    } catch(e) {
+      setOptStatus('Fehler: ' + e.message);
+      console.error(e);
+    }
+    document.getElementById('btnApply').disabled = false;
+  }, 30); // kurz yielden damit der Status-Text sichtbar wird
+}
+
+function resetOptimizations() {
+  if (!origGeo) return;
+  T.mesh.geometry.dispose();
+  T.mesh.geometry = origGeo.clone();
+  T.mesh.geometry.computeVertexNormals();
+
+  const polys = Math.round(origGeo.attributes.position.count / 3);
+  document.getElementById('hudPoly').textContent  = polys.toLocaleString('de-DE');
+  document.getElementById('infoPoly').textContent = polys.toLocaleString('de-DE');
+  document.getElementById('hdrPolyCount').textContent = polys.toLocaleString('de-DE') + ' POLY';
+  document.getElementById('decimateSlider').value = 0;
+  document.getElementById('smoothSlider').value   = 0;
+  document.getElementById('decimateVal').textContent = '0%';
+  document.getElementById('smoothVal').textContent   = '0';
+  document.getElementById('btnReset').style.display  = 'none';
+  setOptStatus('');
+
+  T.mesh.updateMatrixWorld(true);
+  const wb = new THREE.Box3().setFromObject(T.mesh);
+  modelMinY = wb.min.y; modelMaxY = wb.max.y;
+  updatePrintSize();
+}
 
 // ── Druckgröße ──────────────────────────────────────────────────────
 let rawW = 0, rawD = 0, rawH = 0; // originale STL-Maße in STL-Einheiten
@@ -630,12 +916,21 @@ function exportTrimmedSTL() {
   T.mesh.updateMatrixWorld(true);
   const matrix = T.mesh.matrixWorld;
 
+  // Dreieck-Indices: indiziert oder nicht-indiziert
+  const triIndices = [];
+  if (geo.index) {
+    const idx = geo.index.array;
+    for (let i = 0; i < idx.length; i += 3) triIndices.push([idx[i], idx[i+1], idx[i+2]]);
+  } else {
+    for (let i = 0; i < pos.count; i += 3) triIndices.push([i, i+1, i+2]);
+  }
+
   const triangles = [];
   const vA = new THREE.Vector3(), vB = new THREE.Vector3(), vC = new THREE.Vector3();
-  for (let i = 0; i < pos.count; i += 3) {
-    vA.fromBufferAttribute(pos, i).applyMatrix4(matrix);
-    vB.fromBufferAttribute(pos, i+1).applyMatrix4(matrix);
-    vC.fromBufferAttribute(pos, i+2).applyMatrix4(matrix);
+  for (const [ia, ib, ic] of triIndices) {
+    vA.fromBufferAttribute(pos, ia).applyMatrix4(matrix);
+    vB.fromBufferAttribute(pos, ib).applyMatrix4(matrix);
+    vC.fromBufferAttribute(pos, ic).applyMatrix4(matrix);
     for (const tri of clipTriangle(vA.clone(), vB.clone(), vC.clone(), clipCutY)) {
       triangles.push(tri);
     }
@@ -757,6 +1052,9 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   const rawSize = rawBox.getSize(new THREE.Vector3());
   rawW = rawSize.x; rawD = rawSize.z; rawH = rawSize.y;
 
+  // Original speichern für Optimierungs-Reset
+  origGeo = geo.clone();
+
   const mat  = new THREE.MeshPhongMaterial({ color: 0x9a8b7a, specular: 0x222222, shininess: 30 });
   T.mesh = new THREE.Mesh(geo, mat);
 
@@ -780,6 +1078,15 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   document.getElementById('trimSlider').disabled = false;
   document.getElementById('trimVal').textContent = '0%';
   document.getElementById('btnTrimExport').disabled = false;
+
+  // Optimierungs-Controls aktivieren
+  enableOptControls();
+  setOptStatus('');
+  document.getElementById('btnReset').style.display = 'none';
+  document.getElementById('decimateSlider').value   = 0;
+  document.getElementById('smoothSlider').value     = 0;
+  document.getElementById('decimateVal').textContent = '0%';
+  document.getElementById('smoothVal').textContent   = '0';
 
   // Druckgröße aktivieren und mit 100 mm vorbelegen
   const inp = document.getElementById('printHeight');
