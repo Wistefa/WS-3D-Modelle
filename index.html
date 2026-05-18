@@ -1,0 +1,1709 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FORM3D — Photogrammetrie Studio</title>
+<link href="https://fonts.googleapis.com/css2?family=Space+Mono:ital,wght@0,400;0,700;1,400&family=Syne:wght@400;700;800&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.150.0/examples/js/loaders/STLLoader.js"></script>
+<style>
+ :root {
+   --bg: #0a0b0f;
+   --surface: #111318;
+   --surface2: #181b22;
+   --border: #252933;
+   --accent: #00e5ff;
+   --accent2: #ff6b35;
+   --accent3: #a8ff3e;
+   --text: #e8eaf0;
+   --text-dim: #6b7280;
+   --text-dimmer: #3a3f4a;
+   --mono: 'Space Mono', monospace;
+   --sans: 'Syne', sans-serif;
+ }
+
+ * { margin: 0; padding: 0; box-sizing: border-box; }
+
+ body {
+   background: var(--bg);
+   color: var(--text);
+   font-family: var(--sans);
+   min-height: 100vh;
+   overflow-x: hidden;
+ }
+
+ /* ---- GRID BACKGROUND ---- */
+ body::before {
+   content: '';
+   position: fixed;
+   inset: 0;
+   background-image:
+     linear-gradient(var(--border) 1px, transparent 1px),
+     linear-gradient(90deg, var(--border) 1px, transparent 1px);
+   background-size: 40px 40px;
+   opacity: 0.35;
+   pointer-events: none;
+   z-index: 0;
+ }
+
+ /* ---- TOPBAR ---- */
+ header {
+   position: sticky; top: 0; z-index: 100;
+   display: flex; align-items: center; justify-content: space-between;
+   padding: 0 32px;
+   height: 60px;
+   background: rgba(10,11,15,0.92);
+   backdrop-filter: blur(12px);
+   border-bottom: 1px solid var(--border);
+ }
+
+ .logo {
+   font-family: var(--sans);
+   font-weight: 800;
+   font-size: 1.2rem;
+   letter-spacing: 0.15em;
+   color: var(--accent);
+ }
+ .logo span { color: var(--text-dim); font-weight: 400; }
+
+ .header-pills {
+   display: flex; gap: 8px;
+ }
+ .pill {
+   font-family: var(--mono);
+   font-size: 0.65rem;
+   padding: 3px 10px;
+   border-radius: 2px;
+   border: 1px solid var(--border);
+   color: var(--text-dim);
+   letter-spacing: 0.08em;
+ }
+ .pill.active { border-color: var(--accent); color: var(--accent); }
+
+ /* ---- MAIN LAYOUT ---- */
+ .workspace {
+   position: relative;
+   z-index: 1;
+   display: grid;
+   grid-template-columns: 320px 1fr 280px;
+   grid-template-rows: 1fr;
+   height: calc(100vh - 60px);
+ }
+
+ /* ---- LEFT PANEL ---- */
+ .panel-left {
+   border-right: 1px solid var(--border);
+   display: flex; flex-direction: column;
+   overflow: hidden;
+ }
+
+ .panel-section {
+   border-bottom: 1px solid var(--border);
+   padding: 16px 20px;
+ }
+
+ .section-label {
+   font-family: var(--mono);
+   font-size: 0.6rem;
+   letter-spacing: 0.15em;
+   color: var(--text-dim);
+   text-transform: uppercase;
+   margin-bottom: 12px;
+   display: flex; justify-content: space-between; align-items: center;
+ }
+
+ .section-label .badge {
+   background: var(--accent);
+   color: var(--bg);
+   font-size: 0.55rem;
+   padding: 1px 6px;
+   border-radius: 2px;
+   font-weight: 700;
+ }
+
+ /* Upload Zone */
+ .upload-zone {
+   border: 1.5px dashed var(--border);
+   border-radius: 4px;
+   padding: 24px 16px;
+   text-align: center;
+   cursor: pointer;
+   transition: all 0.2s;
+   position: relative;
+   overflow: hidden;
+ }
+ .upload-zone:hover,
+ .upload-zone.drag-over {
+   border-color: var(--accent);
+   background: rgba(0,229,255,0.05);
+ }
+ .upload-zone.drag-over {
+   border-style: solid;
+   transform: scale(1.01);
+ }
+ .photo-cylinder, .pointcloud-canvas { transition: opacity 0.35s ease; }
+ .upload-zone::before {
+   content: '';
+   position: absolute;
+   inset: 0;
+   background: radial-gradient(circle at 50% 0%, rgba(0,229,255,0.06) 0%, transparent 70%);
+   pointer-events: none;
+ }
+
+ .upload-icon {
+   width: 40px; height: 40px;
+   margin: 0 auto 10px;
+   border: 1.5px solid var(--border);
+   border-radius: 4px;
+   display: flex; align-items: center; justify-content: center;
+   font-size: 1.1rem;
+ }
+
+ .upload-text {
+   font-size: 0.75rem;
+   color: var(--text-dim);
+   line-height: 1.5;
+ }
+ .upload-text strong { color: var(--accent); font-family: var(--mono); }
+
+ /* Image grid preview */
+ .img-grid {
+   display: grid;
+   grid-template-columns: repeat(5, 1fr);
+   gap: 4px;
+   margin-top: 12px;
+ }
+
+ .img-thumb {
+   aspect-ratio: 1;
+   border-radius: 2px;
+   background: var(--surface2);
+   border: 1px solid var(--border);
+   display: flex; align-items: center; justify-content: center;
+   font-size: 0.5rem;
+   color: var(--text-dimmer);
+   font-family: var(--mono);
+   overflow: hidden;
+   position: relative;
+   cursor: pointer;
+   transition: border-color 0.15s;
+ }
+ .img-thumb:hover { border-color: var(--accent); }
+ .img-thumb.loaded { background: var(--surface); }
+ .img-thumb.loaded::after {
+   content: '';
+   position: absolute; inset: 0;
+   background: linear-gradient(135deg,
+     rgba(0,229,255,0.15) 0%,
+     transparent 50%,
+     rgba(255,107,53,0.1) 100%);
+ }
+ .img-thumb .angle-label {
+   position: absolute;
+   bottom: 2px; right: 2px;
+   font-family: var(--mono);
+   font-size: 0.42rem;
+   color: rgba(255,255,255,0.5);
+   z-index: 2;
+ }
+
+ .img-count-bar {
+   display: flex; align-items: center; justify-content: space-between;
+   margin-top: 10px;
+ }
+ .img-count {
+   font-family: var(--mono);
+   font-size: 0.7rem;
+   color: var(--accent3);
+ }
+ .img-count span { color: var(--text-dim); }
+
+ /* Settings */
+ .settings-row {
+   display: flex; flex-direction: column; gap: 10px;
+   margin-top: 4px;
+ }
+
+ .setting-item {
+   display: flex; flex-direction: column; gap: 5px;
+ }
+
+ .setting-label {
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   color: var(--text-dim);
+   letter-spacing: 0.05em;
+   display: flex; justify-content: space-between;
+ }
+ .setting-label .val { color: var(--text); }
+
+ .slider-track {
+   height: 3px;
+   background: var(--surface2);
+   border-radius: 2px;
+   position: relative;
+ }
+ .slider-fill {
+   position: absolute; left: 0; top: 0; bottom: 0;
+   background: linear-gradient(90deg, var(--accent), var(--accent2));
+   border-radius: 2px;
+   transition: width 0.3s;
+ }
+ .slider-thumb {
+   position: absolute; top: 50%; transform: translateY(-50%);
+   width: 10px; height: 10px;
+   background: var(--accent);
+   border: 2px solid var(--bg);
+   border-radius: 50%;
+   cursor: grab;
+   transition: left 0.3s;
+ }
+
+ .select-row {
+   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+ }
+
+ .chip-select {
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   padding: 5px 8px;
+   border: 1px solid var(--border);
+   border-radius: 2px;
+   background: var(--surface2);
+   color: var(--text-dim);
+   cursor: pointer;
+   text-align: center;
+   transition: all 0.15s;
+ }
+ .chip-select.active {
+   border-color: var(--accent);
+   color: var(--accent);
+   background: rgba(0,229,255,0.05);
+ }
+
+ /* ---- CENTER VIEWPORT ---- */
+ .viewport {
+   position: relative;
+   display: flex; flex-direction: column;
+   background: var(--surface);
+ }
+
+ .viewport-toolbar {
+   padding: 10px 16px;
+   border-bottom: 1px solid var(--border);
+   display: flex; align-items: center; gap: 12px;
+ }
+
+ .vt-btn {
+   font-family: var(--mono);
+   font-size: 0.6rem;
+   padding: 4px 10px;
+   border: 1px solid var(--border);
+   border-radius: 2px;
+   background: transparent;
+   color: var(--text-dim);
+   cursor: pointer;
+   letter-spacing: 0.06em;
+   transition: all 0.15s;
+ }
+ .vt-btn:hover { border-color: var(--accent); color: var(--accent); }
+ .vt-btn.active { border-color: var(--accent); color: var(--accent); background: rgba(0,229,255,0.05); }
+
+ .vt-spacer { flex: 1; }
+
+ .vt-status {
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   color: var(--text-dim);
+   display: flex; gap: 16px;
+ }
+ .vt-status .dot {
+   width: 6px; height: 6px;
+   border-radius: 50%;
+   background: var(--accent3);
+   display: inline-block;
+   margin-right: 5px;
+   animation: pulse 2s infinite;
+ }
+
+ @keyframes pulse {
+   0%, 100% { opacity: 1; }
+   50% { opacity: 0.3; }
+ }
+
+ /* 3D Preview Area */
+ .preview-3d {
+   flex: 1;
+   display: flex; align-items: center; justify-content: center;
+   position: relative;
+   overflow: hidden;
+ }
+
+ /* Rotating 3D object simulation */
+ .object-stage {
+   position: relative;
+   width: 320px; height: 320px;
+ }
+
+ .orbit-ring {
+   position: absolute;
+   border: 1px solid;
+   border-radius: 50%;
+   top: 50%; left: 50%;
+   transform-origin: center;
+ }
+
+ .orbit-ring:nth-child(1) {
+   width: 300px; height: 80px;
+   margin: -40px 0 0 -150px;
+   border-color: rgba(0,229,255,0.15);
+   transform: rotateX(75deg);
+   animation: spin 8s linear infinite;
+ }
+ .orbit-ring:nth-child(2) {
+   width: 260px; height: 70px;
+   margin: -35px 0 0 -130px;
+   border-color: rgba(255,107,53,0.12);
+   transform: rotateX(75deg) rotateZ(60deg);
+   animation: spin 12s linear infinite reverse;
+ }
+ .orbit-ring:nth-child(3) {
+   width: 220px; height: 60px;
+   margin: -30px 0 0 -110px;
+   border-color: rgba(168,255,62,0.1);
+   transform: rotateX(75deg) rotateZ(120deg);
+   animation: spin 6s linear infinite;
+ }
+
+ @keyframes spin {
+   from { transform: rotateX(75deg) rotateZ(0deg); }
+   to { transform: rotateX(75deg) rotateZ(360deg); }
+ }
+
+ /* 3D Photo Cylinder — rotating statue preview */
+ .photo-cylinder {
+   position: absolute;
+   top: 50%; left: 50%;
+   transform: translate(-50%, -53%);
+   width: 70px; height: 160px;
+   perspective: 420px;
+   perspective-origin: 50% 50%;
+   filter: drop-shadow(0 0 28px rgba(0,229,255,0.4));
+ }
+
+ .cylinder-spinner {
+   width: 100%; height: 100%;
+   transform-style: preserve-3d;
+   animation: cylinderSpin 22s linear infinite;
+ }
+
+ .cylinder-face {
+   position: absolute;
+   width: 70px; height: 160px;
+   top: 0; left: 0;
+   overflow: hidden;
+   border: 1px solid rgba(0,229,255,0.18);
+   border-radius: 2px;
+ }
+
+ .cylinder-face img {
+   width: 100%; height: 100%;
+   object-fit: cover;
+   object-position: center top;
+   opacity: 0.9;
+   filter: brightness(0.85) contrast(1.1) saturate(0.85);
+ }
+
+ @keyframes cylinderSpin {
+   from { transform: rotateY(0deg); }
+   to { transform: rotateY(360deg); }
+ }
+
+ /* Camera icons orbiting */
+ .cam-dot {
+   position: absolute;
+   width: 20px; height: 20px;
+   background: var(--surface2);
+   border: 1px solid var(--accent);
+   border-radius: 3px;
+   display: flex; align-items: center; justify-content: center;
+   font-size: 0.6rem;
+ }
+
+ /* Overlay stats */
+ .corner-stats {
+   position: absolute;
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   color: var(--text-dim);
+   line-height: 1.8;
+ }
+ .corner-stats.tl { top: 16px; left: 16px; }
+ .corner-stats.tr { top: 16px; right: 16px; text-align: right; }
+ .corner-stats.bl { bottom: 16px; left: 16px; }
+ .corner-stats.br { bottom: 16px; right: 16px; text-align: right; }
+
+ .stat-line { display: flex; gap: 8px; align-items: center; }
+ .stat-line .k { color: var(--text-dimmer); }
+ .stat-line .v { color: var(--text); }
+ .stat-line .v.hi { color: var(--accent); }
+ .stat-line .v.warn { color: var(--accent2); }
+
+ /* Corner brackets */
+ .bracket {
+   position: absolute;
+   width: 20px; height: 20px;
+   border-color: rgba(0,229,255,0.3);
+   border-style: solid;
+   border-width: 0;
+ }
+ .bracket.tl { top: 8px; left: 8px; border-top-width: 1px; border-left-width: 1px; }
+ .bracket.tr { top: 8px; right: 8px; border-top-width: 1px; border-right-width: 1px; }
+ .bracket.bl { bottom: 8px; left: 8px; border-bottom-width: 1px; border-left-width: 1px; }
+ .bracket.br { bottom: 8px; right: 8px; border-bottom-width: 1px; border-right-width: 1px; }
+
+ /* Point cloud overlay */
+ .pointcloud-canvas {
+   position: absolute;
+   inset: 0;
+   opacity: 0.5;
+   pointer-events: none;
+ }
+
+ /* Progress section */
+ .progress-section {
+   border-top: 1px solid var(--border);
+   padding: 14px 20px;
+ }
+
+ .progress-header {
+   display: flex; justify-content: space-between;
+   margin-bottom: 10px;
+ }
+
+ .progress-title {
+   font-family: var(--mono);
+   font-size: 0.62rem;
+   color: var(--text-dim);
+   letter-spacing: 0.08em;
+ }
+
+ .progress-pct {
+   font-family: var(--mono);
+   font-size: 0.62rem;
+   color: var(--accent);
+ }
+
+ .steps-row {
+   display: flex; gap: 6px; margin-bottom: 10px;
+ }
+
+ .step-bar {
+   flex: 1;
+   height: 3px;
+   border-radius: 1px;
+   position: relative;
+   overflow: hidden;
+ }
+
+ .step-bar::before {
+   content: '';
+   position: absolute; inset: 0;
+   background: var(--surface2);
+   border-radius: 1px;
+ }
+
+ .step-bar.done::after {
+   content: '';
+   position: absolute; inset: 0;
+   background: var(--accent3);
+   border-radius: 1px;
+ }
+
+ .step-bar.active::after {
+   content: '';
+   position: absolute; inset: 0;
+   background: linear-gradient(90deg, var(--accent), transparent);
+   border-radius: 1px;
+   animation: progress-sweep 2s ease-in-out infinite;
+ }
+
+ @keyframes progress-sweep {
+   0% { transform: translateX(-100%); }
+   100% { transform: translateX(200%); }
+ }
+
+ .step-labels {
+   display: flex; gap: 6px;
+   font-family: var(--mono);
+   font-size: 0.5rem;
+   color: var(--text-dimmer);
+ }
+ .step-labels span { flex: 1; text-align: center; }
+ .step-labels span.done { color: var(--accent3); }
+ .step-labels span.active { color: var(--accent); }
+
+ /* ---- RIGHT PANEL ---- */
+ .panel-right {
+   border-left: 1px solid var(--border);
+   display: flex; flex-direction: column;
+   overflow-y: auto;
+ }
+
+ .panel-right::-webkit-scrollbar { width: 3px; }
+ .panel-right::-webkit-scrollbar-track { background: var(--bg); }
+ .panel-right::-webkit-scrollbar-thumb { background: var(--border); }
+
+ /* Coverage sphere */
+ .coverage-sphere {
+   padding: 20px;
+   display: flex; flex-direction: column; align-items: center;
+ }
+
+ .sphere-svg {
+   width: 140px; height: 140px;
+   margin: 8px auto;
+ }
+
+ .coverage-legend {
+   display: flex; gap: 16px; margin-top: 8px;
+   font-family: var(--mono);
+   font-size: 0.55rem;
+   color: var(--text-dim);
+ }
+ .leg-dot { width: 6px; height: 6px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+
+ /* Quality meter */
+ .quality-rings {
+   display: flex; flex-direction: column; gap: 8px;
+   padding: 0 20px 16px;
+ }
+
+ .q-row {
+   display: flex; align-items: center; gap: 8px;
+   font-family: var(--mono);
+   font-size: 0.58rem;
+ }
+ .q-label { width: 80px; color: var(--text-dim); flex-shrink: 0; }
+ .q-track {
+   flex: 1; height: 4px;
+   background: var(--surface2);
+   border-radius: 2px;
+   overflow: hidden;
+ }
+ .q-fill {
+   height: 100%;
+   border-radius: 2px;
+   transition: width 1s ease;
+ }
+ .q-val { width: 28px; text-align: right; color: var(--text); }
+
+ /* Output formats */
+ .format-grid {
+   display: grid; grid-template-columns: 1fr 1fr; gap: 6px;
+   padding: 0 20px 16px;
+ }
+
+ .format-card {
+   border: 1px solid var(--border);
+   border-radius: 3px;
+   padding: 8px 10px;
+   cursor: pointer;
+   transition: all 0.15s;
+ }
+ .format-card:hover { border-color: var(--accent); }
+ .format-card.selected { border-color: var(--accent); background: rgba(0,229,255,0.04); }
+
+ .fmt-name {
+   font-family: var(--mono);
+   font-size: 0.65rem;
+   color: var(--text);
+   font-weight: 700;
+ }
+ .fmt-desc {
+   font-family: var(--mono);
+   font-size: 0.5rem;
+   color: var(--text-dim);
+   margin-top: 2px;
+ }
+ .fmt-check {
+   width: 8px; height: 8px;
+   border: 1px solid var(--border);
+   border-radius: 50%;
+   float: right;
+   margin-top: 2px;
+ }
+ .format-card.selected .fmt-check {
+   background: var(--accent);
+   border-color: var(--accent);
+ }
+
+ /* CTA */
+ .cta-section {
+   padding: 16px 20px;
+   border-top: 1px solid var(--border);
+   margin-top: auto;
+ }
+
+ .btn-primary {
+   width: 100%;
+   padding: 12px;
+   background: linear-gradient(135deg, var(--accent) 0%, #0099aa 100%);
+   border: none;
+   border-radius: 3px;
+   color: var(--bg);
+   font-family: var(--sans);
+   font-weight: 700;
+   font-size: 0.8rem;
+   letter-spacing: 0.08em;
+   cursor: pointer;
+   transition: all 0.2s;
+   text-transform: uppercase;
+ }
+ .btn-primary:hover {
+   transform: translateY(-1px);
+   box-shadow: 0 8px 24px rgba(0,229,255,0.3);
+ }
+
+ .btn-secondary {
+   width: 100%;
+   padding: 8px;
+   background: transparent;
+   border: 1px solid var(--border);
+   border-radius: 3px;
+   color: var(--text-dim);
+   font-family: var(--mono);
+   font-size: 0.6rem;
+   cursor: pointer;
+   margin-top: 6px;
+   letter-spacing: 0.08em;
+   transition: all 0.15s;
+ }
+ .btn-secondary:hover { border-color: var(--accent2); color: var(--accent2); }
+
+ /* Log terminal */
+ .log-terminal {
+   flex: 1;
+   background: var(--bg);
+   border-top: 1px solid var(--border);
+   padding: 12px 16px;
+   overflow-y: auto;
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   line-height: 1.7;
+ }
+
+ .log-terminal::-webkit-scrollbar { width: 2px; }
+ .log-terminal::-webkit-scrollbar-thumb { background: var(--border); }
+
+ .log-line { display: flex; gap: 10px; }
+ .log-time { color: var(--text-dimmer); flex-shrink: 0; }
+ .log-msg { }
+ .log-msg.info { color: var(--text-dim); }
+ .log-msg.ok { color: var(--accent3); }
+ .log-msg.warn { color: var(--accent2); }
+ .log-msg.hi { color: var(--accent); }
+ .log-msg.err { color: #ff4444; }
+
+ .log-cursor {
+   display: inline-block;
+   width: 6px; height: 1em;
+   background: var(--accent);
+   animation: blink 1s step-end infinite;
+   vertical-align: middle;
+   margin-left: 2px;
+ }
+ @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
+
+ /* Scrollbar global */
+ ::-webkit-scrollbar { width: 4px; }
+ ::-webkit-scrollbar-track { background: transparent; }
+ ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+ /* ── Three.js 3D Viewer ── */
+ #threeContainer {
+   display: none;
+   position: absolute;
+   inset: 0;
+   z-index: 10;
+   background: var(--bg);
+ }
+ #threeContainer.active { display: block; }
+ #threeCanvas { width: 100% !important; height: 100% !important; display: block; }
+
+ .three-hud {
+   position: absolute;
+   pointer-events: none;
+ }
+ .three-hud.bl { bottom: 14px; left: 16px; }
+ .three-hud.br { bottom: 14px; right: 16px; text-align: right; }
+ .three-hud.tr { top: 14px; right: 16px; text-align: right; }
+ .three-stat {
+   font-family: var(--mono);
+   font-size: 0.58rem;
+   color: var(--text-dim);
+   line-height: 1.8;
+ }
+ .three-stat .v { color: var(--text); }
+ .three-stat .hi { color: var(--accent); }
+ .three-stat .g  { color: var(--accent3); }
+
+ .three-hint {
+   position: absolute;
+   bottom: 14px;
+   left: 50%;
+   transform: translateX(-50%);
+   font-family: var(--mono);
+   font-size: 0.5rem;
+   color: var(--text-dimmer);
+   pointer-events: none;
+   white-space: nowrap;
+ }
+ .three-close {
+   position: absolute;
+   top: 12px; left: 12px;
+   font-family: var(--mono);
+   font-size: 0.55rem;
+   color: var(--text-dim);
+   border: 1px solid var(--border);
+   background: rgba(10,11,15,0.8);
+   padding: 3px 8px;
+   border-radius: 2px;
+   cursor: pointer;
+   z-index: 20;
+   pointer-events: all;
+ }
+ .three-close:hover { color: var(--accent2); border-color: var(--accent2); }
+
+ .btn-load-model {
+   width: 100%;
+   padding: 11px;
+   background: linear-gradient(135deg, var(--accent3) 0%, #66cc00 100%);
+   border: none;
+   border-radius: 3px;
+   color: var(--bg);
+   font-family: var(--sans);
+   font-weight: 700;
+   font-size: 0.78rem;
+   letter-spacing: 0.08em;
+   cursor: pointer;
+   transition: all 0.2s;
+   text-transform: uppercase;
+   margin-top: 6px;
+   display: none;
+ }
+ .btn-load-model:hover {
+   transform: translateY(-1px);
+   box-shadow: 0 8px 24px rgba(168,255,62,0.3);
+ }
+</style>
+</head>
+<body>
+
+<header>
+ <div class="logo">FORM<span>3D</span> · PHOTOGRAMMETRIE STUDIO</div>
+ <div class="header-pills">
+   <div class="pill active">v2.4.1</div>
+   <div class="pill">GPU: RTX 4080</div>
+   <div class="pill">RAM: 24.3 GB</div>
+   <div class="pill">SESSION #0042</div>
+ </div>
+</header>
+
+<div class="workspace">
+
+ <!-- ===== LEFT PANEL ===== -->
+ <div class="panel-left">
+
+   <div class="panel-section">
+     <div class="section-label">
+       Bildimport
+       <span class="badge" id="imgBadge">0 / 100</span>
+     </div>
+     <div class="upload-zone" id="uploadZone">
+       <div class="upload-icon">📷</div>
+       <div class="upload-text">
+         <strong>Bilder hierher ziehen</strong><br>
+         oder klicken zum Auswählen<br>
+         <span style="font-size:0.6rem; color: var(--text-dimmer);">JPG, PNG, HEIC · 40–100 Bilder empfohlen</span>
+       </div>
+     </div>
+
+     <div class="img-grid" id="imgGrid"></div>
+
+     <div class="img-count-bar">
+       <div class="img-count"><span id="countLoaded">0</span><span> / 100 Bilder</span></div>
+       <div style="font-family:var(--mono);font-size:0.55rem;color:var(--text-dimmer);">Ø 4.2 MP</div>
+     </div>
+   </div>
+
+   <div class="panel-section">
+     <div class="section-label">Rekonstruktions-Qualität</div>
+     <div class="settings-row">
+       <div class="setting-item">
+         <div class="setting-label">Auflösung <span class="val" id="resVal">Hoch</span></div>
+         <div class="slider-track">
+           <div class="slider-fill" id="resFill" style="width:75%"></div>
+           <div class="slider-thumb" id="resThumb" style="left:calc(75% - 5px)"></div>
+         </div>
+       </div>
+       <div class="setting-item">
+         <div class="setting-label">Feature Density <span class="val" id="featVal">8.000</span></div>
+         <div class="slider-track">
+           <div class="slider-fill" id="featFill" style="width:60%"></div>
+           <div class="slider-thumb" id="featThumb" style="left:calc(60% - 5px)"></div>
+         </div>
+       </div>
+       <div class="setting-item">
+         <div class="setting-label">Textur-Schärfe <span class="val">4K</span></div>
+         <div class="slider-track">
+           <div class="slider-fill" style="width:85%"></div>
+           <div class="slider-thumb" style="left:calc(85% - 5px)"></div>
+         </div>
+       </div>
+     </div>
+   </div>
+
+   <div class="panel-section">
+     <div class="section-label">Verfahren</div>
+     <div class="select-row">
+       <div class="chip-select active" onclick="selectChip(this)">NeRF</div>
+       <div class="chip-select" onclick="selectChip(this)">SfM+MVS</div>
+       <div class="chip-select" onclick="selectChip(this)">Gaussian</div>
+       <div class="chip-select" onclick="selectChip(this)">SLAM</div>
+     </div>
+   </div>
+
+   <div class="panel-section" style="border-bottom:none;">
+     <div class="section-label">Objekt-Typ</div>
+     <div class="select-row">
+       <div class="chip-select active" onclick="selectChip(this)">Produkt</div>
+       <div class="chip-select" onclick="selectChip(this)">Architektur</div>
+       <div class="chip-select" onclick="selectChip(this)">Natur</div>
+       <div class="chip-select" onclick="selectChip(this)">Mensch</div>
+     </div>
+   </div>
+
+ </div>
+
+ <!-- ===== CENTER VIEWPORT ===== -->
+ <div class="viewport">
+
+   <div class="viewport-toolbar">
+     <button class="vt-btn active" data-view="3d" onclick="switchView(this)">3D-Vorschau</button>
+     <button class="vt-btn" data-view="punktwolke" onclick="switchView(this)">Punktwolke</button>
+     <button class="vt-btn" data-view="mesh" onclick="switchView(this)">Mesh</button>
+     <button class="vt-btn" data-view="kamera" onclick="switchView(this)">Kamera-Pose</button>
+     <div class="vt-spacer"></div>
+     <div class="vt-status">
+       <span><span class="dot"></span>Live</span>
+       <span>FPS: 60</span>
+       <span>Polygone: 2.4M</span>
+     </div>
+   </div>
+
+   <div class="preview-3d" id="preview3d">
+     <canvas class="pointcloud-canvas" id="pointCanvas"></canvas>
+
+     <!-- Three.js 3D Viewer -->
+     <div id="threeContainer">
+       <canvas id="threeCanvas"></canvas>
+       <button class="three-close" onclick="hideThreeViewer()">✕ zurück</button>
+       <div class="three-hud bl">
+         <div class="three-stat"><span class="k">MODELL: </span><span class="hi" id="threeModelName">—</span></div>
+         <div class="three-stat"><span class="k">POLY: </span><span class="v" id="threePolyCount">—</span></div>
+         <div class="three-stat"><span class="k">FORMAT: </span><span class="v" id="threeFormat">—</span></div>
+       </div>
+       <div class="three-hud br">
+         <div class="three-stat"><span class="k">DREHEN: </span><span class="g">Auto</span></div>
+         <div class="three-stat"><span class="k">ZOOM: </span><span class="v">Scroll</span></div>
+         <div class="three-stat"><span class="k">RESET: </span><span class="v">Doppelklick</span></div>
+       </div>
+       <div class="three-hint">🖱 Ziehen zum Drehen · Scrollen zum Zoomen · Doppelklick zum Zurücksetzen</div>
+     </div>
+
+     <div class="bracket tl"></div>
+     <div class="bracket tr"></div>
+     <div class="bracket bl"></div>
+     <div class="bracket br"></div>
+
+     <!-- Corner stats -->
+     <div class="corner-stats tl">
+       <div class="stat-line"><span class="k">OBJ:</span><span class="v">Bali_Guardian_Scan_v1</span></div>
+       <div class="stat-line"><span class="k">POLY:</span><span class="v hi">2.423.481</span></div>
+       <div class="stat-line"><span class="k">VERT:</span><span class="v">1.211.740</span></div>
+       <div class="stat-line"><span class="k">UV-CH:</span><span class="v">2</span></div>
+     </div>
+     <div class="corner-stats tr">
+       <div class="stat-line"><span class="k">MODE:</span><span class="v hi">NeRF</span></div>
+       <div class="stat-line"><span class="k">EPOCH:</span><span class="v">1.240</span></div>
+       <div class="stat-line"><span class="k">LOSS:</span><span class="v warn">0.0023</span></div>
+       <div class="stat-line"><span class="k">PSNR:</span><span class="v">34.7 dB</span></div>
+     </div>
+     <div class="corner-stats bl">
+       <div class="stat-line"><span class="k">KAMERA:</span><span class="v">72 / 100</span></div>
+       <div class="stat-line"><span class="k">REPROJ.:</span><span class="v hi">0.38 px</span></div>
+       <div class="stat-line"><span class="k">SKALA:</span><span class="v">1:1.0</span></div>
+     </div>
+     <div class="corner-stats br">
+       <div class="stat-line"><span class="k">BOUNDING:</span><span class="v">38×55×25 cm</span></div>
+       <div class="stat-line"><span class="k">TEXTUR:</span><span class="v">4096×4096</span></div>
+       <div class="stat-line"><span class="k">VOLUMEN:</span><span class="v">~18 L</span></div>
+     </div>
+
+     <!-- 3D Object Stage -->
+     <div class="object-stage">
+       <div class="orbit-ring"></div>
+       <div class="orbit-ring"></div>
+       <div class="orbit-ring"></div>
+
+       <!-- 3D Photo Cylinder — 8 statue views rotating 360° -->
+       <div class="photo-cylinder">
+         <div class="cylinder-spinner">
+           <div class="cylinder-face" style="transform:rotateY(0deg) translateZ(85px)"><img src="photos/IMG_6230.JPG" loading="lazy" alt="0°"></div>
+           <div class="cylinder-face" style="transform:rotateY(45deg) translateZ(85px)"><img src="photos/IMG_6239.JPG" loading="lazy" alt="45°"></div>
+           <div class="cylinder-face" style="transform:rotateY(90deg) translateZ(85px)"><img src="photos/IMG_6248.JPG" loading="lazy" alt="90°"></div>
+           <div class="cylinder-face" style="transform:rotateY(135deg) translateZ(85px)"><img src="photos/IMG_6257.JPG" loading="lazy" alt="135°"></div>
+           <div class="cylinder-face" style="transform:rotateY(180deg) translateZ(85px)"><img src="photos/IMG_6266.JPG" loading="lazy" alt="180°"></div>
+           <div class="cylinder-face" style="transform:rotateY(225deg) translateZ(85px)"><img src="photos/IMG_6275.JPG" loading="lazy" alt="225°"></div>
+           <div class="cylinder-face" style="transform:rotateY(270deg) translateZ(85px)"><img src="photos/IMG_6284.JPG" loading="lazy" alt="270°"></div>
+           <div class="cylinder-face" style="transform:rotateY(315deg) translateZ(85px)"><img src="photos/IMG_6293.JPG" loading="lazy" alt="315°"></div>
+         </div>
+       </div>
+
+     </div>
+   </div>
+
+   <div class="progress-section">
+     <div class="progress-header">
+       <div class="progress-title">VERARBEITUNGS-PIPELINE</div>
+       <div class="progress-pct" id="progressPct">62%</div>
+     </div>
+     <div class="steps-row">
+       <div class="step-bar done"></div>
+       <div class="step-bar done"></div>
+       <div class="step-bar done"></div>
+       <div class="step-bar active"></div>
+       <div class="step-bar"></div>
+       <div class="step-bar"></div>
+       <div class="step-bar"></div>
+     </div>
+     <div class="step-labels">
+       <span class="done">EXIF</span>
+       <span class="done">Feature</span>
+       <span class="done">Match</span>
+       <span class="active">SfM</span>
+       <span>MVS</span>
+       <span>Mesh</span>
+       <span>Tex</span>
+     </div>
+   </div>
+
+   <!-- Log terminal -->
+   <div class="log-terminal" id="logTerminal">
+     <div class="log-line"><span class="log-time">09:14:02</span><span class="log-msg ok">[INIT] Form3D Engine v2.4.1 gestartet</span></div>
+     <div class="log-line"><span class="log-time">09:14:03</span><span class="log-msg info">[GPU] CUDA 12.3 · RTX 4080 · 16 GB VRAM verfügbar</span></div>
+     <div class="log-line"><span class="log-time">09:14:08</span><span class="log-msg hi">[IMPORT] 72 Bilder geladen · 4.2 MP Ø · 3.1 GB gesamt</span></div>
+     <div class="log-line"><span class="log-time">09:14:12</span><span class="log-msg ok">[EXIF] Kalibrierungsdaten extrahiert · f=24mm · ISO 200</span></div>
+     <div class="log-line"><span class="log-time">09:14:15</span><span class="log-msg info">[FEATURE] SIFT-Extraktion · 8.240 Keypoints/Bild</span></div>
+     <div class="log-line"><span class="log-time">09:14:31</span><span class="log-msg ok">[MATCH] 2.592 Bildpaare · 94.3% Erfolgsrate</span></div>
+     <div class="log-line"><span class="log-time">09:14:45</span><span class="log-msg ok">[SfM] Kamerapose-Optimierung läuft...</span></div>
+     <div class="log-line"><span class="log-time">09:15:03</span><span class="log-msg warn">[SfM] 4 Bilder ausgeschlossen · Überlappung &lt; 20%</span></div>
+     <div class="log-line"><span class="log-time">09:15:18</span><span class="log-msg hi">[NeRF] Epoch 1240/5000 · Loss: 0.0023 · PSNR: 34.7 dB</span></div>
+     <div class="log-line"><span class="log-time">09:15:20</span><span class="log-msg info">[MEM] VRAM: 11.2 / 16.0 GB<span class="log-cursor"></span></span></div>
+   </div>
+
+ </div>
+
+ <!-- ===== RIGHT PANEL ===== -->
+ <div class="panel-right">
+
+   <div class="panel-section">
+     <div class="section-label">Kamera-Abdeckung</div>
+     <div class="coverage-sphere">
+       <svg class="sphere-svg" viewBox="0 0 140 140">
+         <!-- sphere outline -->
+         <circle cx="70" cy="70" r="60" stroke="#252933" stroke-width="1" fill="none"/>
+         <ellipse cx="70" cy="70" rx="60" ry="18" stroke="#252933" stroke-width="1" fill="none"/>
+         <ellipse cx="70" cy="70" rx="60" ry="40" stroke="#1a1f2a" stroke-width="1" fill="none" transform="rotate(45 70 70)"/>
+         <line x1="10" y1="70" x2="130" y2="70" stroke="#252933" stroke-width="1"/>
+         <line x1="70" y1="10" x2="70" y2="130" stroke="#252933" stroke-width="1"/>
+
+         <!-- camera positions (dots) -->
+         <g id="cameraDots"></g>
+
+         <!-- object center -->
+         <circle cx="70" cy="70" r="5" fill="var(--accent2)" opacity="0.8"/>
+         <circle cx="70" cy="70" r="2" fill="var(--accent2)"/>
+
+         <!-- coverage highlight arcs -->
+         <path d="M 30 40 Q 70 20 110 40 Q 130 70 110 100 Q 70 120 30 100 Q 10 70 30 40 Z"
+           fill="rgba(0,229,255,0.04)" stroke="rgba(0,229,255,0.2)" stroke-width="0.5"/>
+       </svg>
+       <div class="coverage-legend">
+         <div><span class="leg-dot" style="background:var(--accent)"></span>Abgedeckt</div>
+         <div><span class="leg-dot" style="background:var(--accent2)"></span>Lücken</div>
+         <div><span class="leg-dot" style="background:var(--text-dimmer)"></span>Unten</div>
+       </div>
+     </div>
+   </div>
+
+   <div class="panel-section">
+     <div class="section-label">Qualitätsindikatoren</div>
+     <div class="quality-rings">
+       <div class="q-row">
+         <span class="q-label">Überlappung</span>
+         <div class="q-track"><div class="q-fill" style="width:88%; background: var(--accent3)"></div></div>
+         <span class="q-val" style="color:var(--accent3)">88%</span>
+       </div>
+       <div class="q-row">
+         <span class="q-label">Schärfe</span>
+         <div class="q-track"><div class="q-fill" style="width:76%; background: var(--accent)"></div></div>
+         <span class="q-val" style="color:var(--accent)">76%</span>
+       </div>
+       <div class="q-row">
+         <span class="q-label">Belichtung</span>
+         <div class="q-track"><div class="q-fill" style="width:91%; background: var(--accent3)"></div></div>
+         <span class="q-val" style="color:var(--accent3)">91%</span>
+       </div>
+       <div class="q-row">
+         <span class="q-label">Pose-Fehler</span>
+         <div class="q-track"><div class="q-fill" style="width:38%; background: var(--accent)"></div></div>
+         <span class="q-val" style="color:var(--accent)">0.38</span>
+       </div>
+       <div class="q-row">
+         <span class="q-label">Sichtbarkeit</span>
+         <div class="q-track"><div class="q-fill" style="width:65%; background: var(--accent2)"></div></div>
+         <span class="q-val" style="color:var(--accent2)">65%</span>
+       </div>
+     </div>
+   </div>
+
+   <div class="panel-section">
+     <div class="section-label">Export-Format</div>
+     <div class="format-grid">
+       <div class="format-card selected" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.OBJ</div>
+         <div class="fmt-desc">Universal</div>
+       </div>
+       <div class="format-card" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.GLB</div>
+         <div class="fmt-desc">Web / AR</div>
+       </div>
+       <div class="format-card" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.FBX</div>
+         <div class="fmt-desc">Game Engine</div>
+       </div>
+       <div class="format-card" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.STL</div>
+         <div class="fmt-desc">3D-Druck</div>
+       </div>
+       <div class="format-card" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.USDZ</div>
+         <div class="fmt-desc">Apple AR</div>
+       </div>
+       <div class="format-card" onclick="selectFormat(this)">
+         <div class="fmt-check"></div>
+         <div class="fmt-name">.PLY</div>
+         <div class="fmt-desc">Punktwolke</div>
+       </div>
+     </div>
+   </div>
+
+   <div class="cta-section">
+     <button class="btn-primary" onclick="startReconstruction()">⬡ REKONSTRUKTION STARTEN</button>
+     <button class="btn-load-model" id="btnLoadModel" onclick="loadModelFile()">⬡ 3D-MODELL IN VIEWER LADEN</button>
+     <button class="btn-secondary" onclick="previewResult()">VORSCHAU GENERIEREN</button>
+   </div>
+
+ </div>
+
+</div>
+
+<script>
+'use strict';
+
+// ── State ──────────────────────────────────────────────────────
+const APP = { files: [], running: false, done: false, view: '3d',
+              threeReady: false, threeVisible: false, meshLoaded: false, wireframe: false };
+
+// ── Helpers ────────────────────────────────────────────────────
+const $ = id => document.getElementById(id);
+const $$ = sel => [...document.querySelectorAll(sel)];
+const esc = s => s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+
+// ── Log terminal ───────────────────────────────────────────────
+function log(type, msg) {
+  const t    = new Date().toTimeString().slice(0,8);
+  const term = $('logTerminal');
+  $$('.log-cursor').forEach(c => c.remove());
+  const line = document.createElement('div');
+  line.className = 'log-line';
+  line.innerHTML = `<span class="log-time">${t}</span><span class="log-msg ${type}">${esc(msg)}<span class="log-cursor"></span></span>`;
+  term.appendChild(line);
+  term.scrollTop = term.scrollHeight;
+}
+
+// ── Upload ─────────────────────────────────────────────────────
+function initUpload() {
+  const zone  = $('uploadZone');
+  const input = $('fileInput');
+  zone.addEventListener('click', () => input.click());
+  zone.addEventListener('dragover',  e => { e.preventDefault(); zone.classList.add('drag-over'); });
+  zone.addEventListener('dragleave', () => zone.classList.remove('drag-over'));
+  zone.addEventListener('drop', e => {
+    e.preventDefault(); zone.classList.remove('drag-over');
+    const files = [...e.dataTransfer.files].filter(f => /^image\//i.test(f.type));
+    if (files.length) processFiles(files);
+  });
+  input.addEventListener('change', () => { if (input.files.length) processFiles([...input.files]); });
+
+  // STL/OBJ Modell-Datei laden
+  const modelInput = $('modelFileInput');
+  if (modelInput) {
+    modelInput.addEventListener('change', e => {
+      const file = e.target.files[0]; if (!file) return;
+      const reader = new FileReader();
+      reader.onload = ev => { showThreeViewer(); loadSTLBuffer(ev.target.result, file.name); };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+}
+
+function processFiles(files) {
+  APP.files = files.sort((a,b) => a.name.localeCompare(b.name, undefined, {numeric:true}));
+  const n   = APP.files.length;
+  renderGrid(APP.files.map((f,i) => ({
+    src:   URL.createObjectURL(f),
+    angle: Math.round((i / n) * 360) + '°',
+  })));
+  updateCounter(n);
+  const mb = (APP.files.reduce((s,f) => s + f.size, 0) / 1048576).toFixed(0);
+  log('hi',   `[IMPORT] ${n} Bilder geladen · ${mb} MB gesamt`);
+  log('info', '[EXIF]   Kalibrierungsdaten werden extrahiert...');
+  setTimeout(() => {
+    log('ok',   `[EXIF]   f≈24mm · ISO 64–200 · ${n} gültige Bilder`);
+    log('info', '[ANALYSE] Überlappungsgrad wird berechnet...');
+  }, 700);
+  setTimeout(() => {
+    const ov = Math.min(78 + Math.round(n / 4), 97);
+    log('ok', `[ANALYSE] Ø Überlappung: ${ov}% · Abdeckung: 360°`);
+    refreshQuality(n);
+    refreshCamDots(n);
+    refreshCylinder(APP.files);
+  }, 1500);
+}
+
+// ── Grid ───────────────────────────────────────────────────────
+function renderGrid(items) {
+  const grid = $('imgGrid');
+  grid.innerHTML = '';
+  items.forEach(({src, angle}) => {
+    const div = document.createElement('div');
+    div.className = 'img-thumb loaded';
+    const img = document.createElement('img');
+    img.src = src; img.loading = 'lazy';
+    img.style.cssText = 'position:absolute;inset:0;width:100%;height:100%;object-fit:cover;';
+    const lbl = document.createElement('span');
+    lbl.className = 'angle-label'; lbl.textContent = angle;
+    div.append(img, lbl);
+    grid.appendChild(div);
+  });
+}
+
+function updateCounter(n) {
+  $('countLoaded').textContent = n;
+  $('imgBadge').textContent    = `${n} / 100`;
+}
+
+// ── Cylinder: update with uploaded photos ──────────────────────
+function refreshCylinder(files) {
+  const faces = $$('.cylinder-face img');
+  faces.forEach((img, i) => {
+    const idx = Math.round((i / faces.length) * (files.length - 1));
+    const f   = files[idx];
+    if (f) img.src = URL.createObjectURL(f);
+  });
+}
+
+// ── Quality bars ───────────────────────────────────────────────
+function refreshQuality(count) {
+  const f    = Math.min(count / 55, 1);
+  const data = [
+    [Math.round(70 + f*24), '--accent3', false],
+    [Math.round(60 + f*28), '--accent',  false],
+    [Math.round(80 + f*16), '--accent3', false],
+    [Math.round(18 + f*24), '--accent',  true ],
+    [Math.round(52 + f*32), '--accent2', false],
+  ];
+  $$('.q-row').forEach((row, i) => {
+    if (!data[i]) return;
+    const [pct, clr, isErr] = data[i];
+    const c    = `var(${clr})`;
+    const fill = row.querySelector('.q-fill');
+    const val  = row.querySelector('.q-val');
+    if (fill) { fill.style.width = pct + '%'; fill.style.background = c; }
+    if (val)  { val.style.color = c; val.textContent = isErr ? (0.65 - f*0.30).toFixed(2) + ' px' : pct + '%'; }
+  });
+}
+
+// ── Camera dots ────────────────────────────────────────────────
+function refreshCamDots(count) {
+  const g = $('cameraDots'); if (!g) return;
+  g.innerHTML = '';
+  const n = Math.min(count, 100);
+  const rings = [[56,0],[56,Math.PI/6],[42,Math.PI/3]]; // [radius, z-offset]
+  for (let i = 0; i < n; i++) {
+    const theta = (i / n) * Math.PI * 2;
+    const ring  = rings[i % rings.length];
+    const r     = ring[0], zOff = ring[1];
+    const cx    = 70 + r * Math.cos(theta) * 0.95;
+    const cy    = 70 - r * 0.28 * (i % rings.length) + r * 0.7 * Math.sin(theta) * 0.8;
+    const dot   = document.createElementNS('http://www.w3.org/2000/svg','circle');
+    dot.setAttribute('cx', cx.toFixed(1));
+    dot.setAttribute('cy', cy.toFixed(1));
+    dot.setAttribute('r',  i < n-3 ? '2' : '2.5');
+    dot.setAttribute('fill', i < n-3 ? 'rgba(0,229,255,0.75)' : 'rgba(255,107,53,0.9)');
+    g.appendChild(dot);
+  }
+}
+
+// ── View switcher ──────────────────────────────────────────────
+function switchView(el) {
+  $$('.vt-btn').forEach(b => b.classList.remove('active'));
+  el.classList.add('active');
+  APP.view = el.dataset.view || '3d';
+
+  const cyl   = document.querySelector('.photo-cylinder');
+  const cloud = $('pointCanvas');
+  const rings = $$('.orbit-ring');
+  const faces = $$('.cylinder-face img');
+
+  // 3D-Vorschau: zeige echten Mesh wenn vorhanden, sonst Zylinder
+  if (APP.view === '3d') {
+    if (APP.meshLoaded) {
+      showThreeViewer();
+      if (T.mesh) { T.mesh.material.wireframe = false; T.mesh.material.color.setHex(0x7d6e5e); }
+    } else {
+      hideThreeViewer();
+      if (cyl)   { cyl.style.opacity='1'; cyl.style.filter='drop-shadow(0 0 28px rgba(0,229,255,0.4))'; }
+      if (cloud)   cloud.style.opacity = '0.4';
+      rings.forEach(r => { r.style.opacity='1'; r.style.borderColor=''; });
+      faces.forEach(img => { img.style.filter='brightness(0.85) contrast(1.1) saturate(0.85)'; });
+    }
+    return;
+  }
+
+  // Mesh-View: Wireframe des echten Meshes
+  if (APP.view === 'mesh') {
+    if (APP.meshLoaded) {
+      showThreeViewer();
+      if (T.mesh) {
+        T.mesh.material.wireframe = true;
+        T.mesh.material.color.setHex(0xa8ff3e);
+      }
+    } else {
+      hideThreeViewer();
+      if (cyl) cyl.style.filter = 'drop-shadow(0 0 22px rgba(168,255,62,0.7))';
+      if (cloud) cloud.style.opacity = '0.7';
+      faces.forEach(img => { img.style.filter='brightness(0.3) contrast(3) saturate(0) sepia(0.4) hue-rotate(80deg)'; });
+    }
+    return;
+  }
+
+  // Andere Views: Three.js ausblenden
+  hideThreeViewer();
+
+  // reset defaults
+  if (cyl)   { cyl.style.opacity='1'; cyl.style.filter='drop-shadow(0 0 28px rgba(0,229,255,0.4))'; }
+  if (cloud)   cloud.style.opacity = '0.4';
+  rings.forEach(r => { r.style.opacity='1'; r.style.borderColor=''; });
+  faces.forEach(img => { img.style.filter='brightness(0.85) contrast(1.1) saturate(0.85)'; });
+
+  if (APP.view === 'punktwolke') {
+    if (cyl) cyl.style.opacity = '0';
+    if (cloud) cloud.style.opacity = '1';
+    rings.forEach(r => r.style.opacity = '0.2');
+  } else if (APP.view === 'kamera') {
+    if (cyl) cyl.style.opacity = '0.2';
+    if (cloud) cloud.style.opacity = '0.5';
+    rings.forEach(r => { r.style.opacity='1'; r.style.borderColor='rgba(0,229,255,0.45)'; });
+  }
+}
+
+// ── Sliders ────────────────────────────────────────────────────
+function initSliders() {
+  const configs = [
+    { labels: ['Niedrig','Mittel','Hoch','Ultra'] },
+    { min: 2000, max: 16000, round: 500 },
+    { labels: ['2K','4K','8K'] },
+  ];
+  $$('.slider-track').forEach((track, idx) => {
+    const cfg   = configs[idx] || configs[0];
+    const thumb = track.querySelector('.slider-thumb');
+    const fill  = track.querySelector('.slider-fill');
+    const valEl = track.closest('.setting-item')?.querySelector('.val');
+    if (!thumb) return;
+    let dragging = false;
+    const apply = e => {
+      const rect = track.getBoundingClientRect();
+      const pct  = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      fill.style.width  = (pct*100) + '%';
+      thumb.style.left  = `calc(${pct*100}% - 5px)`;
+      if (!valEl) return;
+      if (cfg.labels) {
+        valEl.textContent = cfg.labels[Math.round(pct * (cfg.labels.length-1))];
+      } else {
+        valEl.textContent = (Math.round((cfg.min + pct*(cfg.max-cfg.min)) / cfg.round) * cfg.round).toLocaleString('de');
+      }
+    };
+    thumb.addEventListener('mousedown', e => { dragging = true; e.preventDefault(); });
+    document.addEventListener('mousemove', e => { if (dragging) apply(e); });
+    document.addEventListener('mouseup',   () => { dragging = false; });
+    track.addEventListener('click', apply);
+  });
+}
+
+// ── Three.js 3D Viewer ─────────────────────────────────────────
+let T = {}; // Three.js objects: scene, camera, renderer, controls, mesh
+
+function initThreeJS() {
+  if (APP.threeReady) return;
+  const cont = $('threeContainer');
+  const w = cont.clientWidth  || 800;
+  const h = cont.clientHeight || 500;
+
+  T.scene = new THREE.Scene();
+  T.scene.background = new THREE.Color(0x0a0b0f);
+
+  // Grid floor
+  const grid = new THREE.GridHelper(800, 40, 0x1a1f2a, 0x111520);
+  grid.position.y = -110;
+  T.scene.add(grid);
+
+  // Camera
+  T.camera = new THREE.PerspectiveCamera(48, w / h, 0.5, 8000);
+  T.camera.position.set(0, 60, 340);
+
+  // Renderer
+  T.renderer = new THREE.WebGLRenderer({ antialias: true, canvas: $('threeCanvas') });
+  T.renderer.setSize(w, h);
+  T.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  T.renderer.shadowMap.enabled = true;
+  T.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  T.renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  T.renderer.toneMappingExposure = 1.2;
+
+  // Lights
+  T.scene.add(new THREE.AmbientLight(0x334455, 0.7));
+  const key = new THREE.DirectionalLight(0xffffff, 2.2);
+  key.position.set(200, 350, 200); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048); T.scene.add(key);
+  const fill = new THREE.DirectionalLight(0x00e5ff, 0.9);
+  fill.position.set(-200, 80, -100); T.scene.add(fill);
+  const rim = new THREE.PointLight(0xa8ff3e, 0.5, 1200);
+  rim.position.set(0, 220, -300); T.scene.add(rim);
+  const back = new THREE.DirectionalLight(0xff6b35, 0.25);
+  back.position.set(0, -100, -300); T.scene.add(back);
+
+  // OrbitControls
+  T.controls = new THREE.OrbitControls(T.camera, T.renderer.domElement);
+  T.controls.enableDamping = true;
+  T.controls.dampingFactor = 0.055;
+  T.controls.autoRotate = true;
+  T.controls.autoRotateSpeed = 1.2;
+  T.controls.minDistance = 40;
+  T.controls.maxDistance = 2500;
+
+  // Drag stops auto-rotate, dblclick resets
+  T.controls.addEventListener('start', () => { T.controls.autoRotate = false; });
+  T.renderer.domElement.addEventListener('dblclick', resetCamera);
+
+  // Resize observer
+  new ResizeObserver(() => {
+    const w2 = cont.clientWidth, h2 = cont.clientHeight;
+    T.camera.aspect = w2 / h2;
+    T.camera.updateProjectionMatrix();
+    T.renderer.setSize(w2, h2);
+  }).observe(cont);
+
+  APP.threeReady = true;
+  animateThree();
+}
+
+function resetCamera() {
+  T.camera.position.set(0, 60, 340);
+  T.controls.target.set(0, 0, 0);
+  T.controls.autoRotate = true;
+}
+
+function animateThree() {
+  if (!APP.threeVisible) return;
+  requestAnimationFrame(animateThree);
+  T.controls.update();
+  T.renderer.render(T.scene, T.camera);
+}
+
+function loadSTLBuffer(buffer, filename) {
+  const loader   = new THREE.STLLoader();
+  const geometry = loader.parse(buffer);
+  geometry.computeVertexNormals();
+
+  // Center
+  geometry.computeBoundingBox();
+  const center = geometry.boundingBox.getCenter(new THREE.Vector3());
+  const size   = geometry.boundingBox.getSize(new THREE.Vector3());
+  geometry.translate(-center.x, -center.y, -center.z);
+
+  // Scale to fit ~200 units
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const scale  = 200 / maxDim;
+  geometry.scale(scale, scale, scale);
+
+  // Sit on grid
+  geometry.computeBoundingBox();
+  geometry.translate(0, -geometry.boundingBox.min.y - 110, 0);
+
+  const material = new THREE.MeshPhongMaterial({
+    color: 0x7d6e5e, specular: 0x1a1a1a, shininess: 22,
+    side: THREE.DoubleSide,
+  });
+
+  if (T.mesh) { T.scene.remove(T.mesh); T.mesh.geometry.dispose(); }
+  T.mesh = new THREE.Mesh(geometry, material);
+  T.mesh.castShadow = true; T.mesh.receiveShadow = true;
+  T.scene.add(T.mesh);
+
+  const poly = Math.round(geometry.attributes.position.count / 3);
+  $('threeModelName').textContent = 'Bali Guardian';
+  $('threePolyCount').textContent  = poly.toLocaleString('de');
+  $('threeFormat').textContent     = filename ? filename.split('.').pop().toUpperCase() : 'STL';
+  resetCamera();
+
+  APP.meshLoaded = true;
+  log('ok', `[3D-VIEWER] Mesh geladen · ${poly.toLocaleString('de')} Polygone`);
+}
+
+function showThreeViewer() {
+  $('threeContainer').classList.add('active');
+  const cyl = document.querySelector('.photo-cylinder');
+  if (cyl) cyl.style.display = 'none';
+  $$('.orbit-ring').forEach(r => r.style.display = 'none');
+  $('pointCanvas').style.opacity = '0';
+  APP.threeVisible = true;
+  initThreeJS();
+  animateThree();
+}
+
+function hideThreeViewer() {
+  $('threeContainer').classList.remove('active');
+  const cyl = document.querySelector('.photo-cylinder');
+  if (cyl) cyl.style.display = '';
+  $$('.orbit-ring').forEach(r => r.style.display = '');
+  $('pointCanvas').style.opacity = '0.4';
+  APP.threeVisible = false;
+  drawCloud(); // restart cloud loop
+}
+
+async function loadModelFile() {
+  log('info', '[3D-VIEWER] Modell wird geladen...');
+  // Versuche Auto-Load aus Projektordner
+  try {
+    const resp = await fetch('./bali_guardian.stl');
+    if (resp.ok) {
+      const buf = await resp.arrayBuffer();
+      showThreeViewer();
+      loadSTLBuffer(buf, 'bali_guardian.stl');
+      return;
+    }
+  } catch (e) {}
+  // Fallback: Datei-Dialog
+  log('info', '[3D-VIEWER] Bitte STL-Datei auswählen...');
+  $('modelFileInput').click();
+}
+
+// ── Point cloud canvas ─────────────────────────────────────────
+const canvas = $('pointCanvas');
+const points = Array.from({length: 900}, () => {
+  const t = Math.random(), w = 0.16 + (1-t)*0.22;
+  return { x: 0.5+(Math.random()-0.5)*w*2, y: t,
+           vx:(Math.random()-0.5)*0.00018, vy:(Math.random()-0.5)*0.00008,
+           sz:Math.random()*1.5+0.3, h:Math.random()>0.8?30:180, a:Math.random()*0.6+0.15 };
+});
+
+function resizeCanvas() {
+  if (!canvas) return;
+  canvas.width = canvas.offsetWidth; canvas.height = canvas.offsetHeight;
+}
+
+function drawCloud() {
+  if (APP.threeVisible) return; // Three.js hat Priorität
+  if (canvas && canvas.getContext) {
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    const cx = canvas.width/2, cy = canvas.height/2;
+    const sc = Math.min(canvas.width, canvas.height) * 0.3;
+    for (const p of points) {
+      const sx = cx + (p.x-0.5)*sc, sy = cy + (p.y-0.5)*sc*2.4;
+      ctx.beginPath(); ctx.arc(sx, sy, p.sz, 0, Math.PI*2);
+      ctx.fillStyle = `hsla(${p.h},100%,65%,${p.a})`; ctx.fill();
+      p.x += p.vx; p.y += p.vy;
+      if (p.x<0.3||p.x>0.7) p.vx *= -1;
+      if (p.y<0||p.y>1) p.vy *= -1;
+    }
+  }
+  requestAnimationFrame(drawCloud);
+}
+
+// ── Chip & Format select ───────────────────────────────────────
+function selectChip(el) {
+  el.closest('.select-row').querySelectorAll('.chip-select').forEach(c => c.classList.remove('active'));
+  el.classList.add('active');
+}
+function selectFormat(el) {
+  el.closest('.format-grid').querySelectorAll('.format-card').forEach(c => c.classList.remove('selected'));
+  el.classList.add('selected');
+}
+
+// ── Reconstruction pipeline ────────────────────────────────────
+const STEPS = [
+  { ms: 700,  msgs:[['info','[EXIF]   GPS ignoriert · Auto-Kalibrierung läuft'],['ok','[EXIF]   4K · f≈24mm · ISO 64–200 · alle Bilder gültig']] },
+  { ms: 2600, msgs:[['info','[FEAT]   SIFT-Extraktion · 8 CPU-Threads'],['hi','[FEAT]   Ø 9.240 Keypoints/Bild · 646.800 gesamt'],['ok','[FEAT]   Feature-Extraktion abgeschlossen']] },
+  { ms: 3400, msgs:[['info','[MATCH]  Bildpaare verglichen · FLANN-Matching'],['hi','[MATCH]  2.415 Paare · Erfolgsrate 94.7%'],['ok','[MATCH]  RANSAC · 3.1% Outlier verworfen']] },
+  { ms: 5000, msgs:[['info','[SfM]    Inkrementelle Rekonstruktion gestartet'],['hi','[SfM]    52 Kameras registriert...'],['warn','[SfM]    3 Bilder ausgeschlossen — Überlappung < 15%'],['ok','[SfM]    Bundle Adjustment konvergiert · RMS: 0.34 px'],['hi','[SfM]    67 Kameras · 485.210 Punkte (Sparse Cloud)']] },
+  { ms: 4200, msgs:[['info','[MVS]    Tiefenkarten · GPU-Modus aktiv'],['hi','[MVS]    18.4M Punkte in Dense Cloud'],['ok','[MVS]    Confidence-Cut → 16.2M Punkte']] },
+  { ms: 3000, msgs:[['info','[MESH]   Poisson Reconstruction · Tiefe 11'],['warn','[MESH]   Hohe Krümmung · Adaptives Resampling'],['ok','[MESH]   2.418.652 Polygone · 1.210.882 Vertices']] },
+  { ms: 2600, msgs:[['info','[TEX]    4096×4096 Texturatlas'],['hi','[TEX]    Seam-Healing · Poisson-Blending'],['ok','[TEX]    Textur fertig · Dateien werden geschrieben...']] },
+];
+const STEP_LABELS = ['EXIF','Feature','Match','SfM','MVS','Mesh','Tex'];
+
+async function startReconstruction() {
+  if (APP.running) return;
+  const photoCount = $$('.img-thumb.loaded').length;
+  if (photoCount === 0) { log('err','[ERROR] Keine Bilder geladen — bitte zuerst Bilder importieren'); return; }
+
+  APP.running = true; APP.done = false;
+  const btn    = document.querySelector('.btn-primary');
+  btn.textContent = '⟳  VERARBEITUNG LÄUFT...';
+  btn.disabled = true; btn.style.opacity = '0.7';
+
+  const bars   = $$('.step-bar');
+  const labels = $$('.step-labels span');
+  bars.forEach(b   => b.className = 'step-bar');
+  labels.forEach(l => l.className = '');
+  $('progressPct').textContent = '0%';
+
+  const method = (document.querySelector('.chip-select.active')||{textContent:'NeRF'}).textContent.trim();
+  log('hi', `[START] ${method}-Rekonstruktion · ${photoCount} Bilder`);
+
+  for (let i = 0; i < STEPS.length; i++) {
+    const step = STEPS[i];
+    const pct  = Math.round((i / STEPS.length) * 100);
+    if (bars[i])   bars[i].className   = 'step-bar active';
+    if (labels[i]) labels[i].className = 'active';
+    $('progressPct').textContent = pct + '%';
+    const delay = step.ms / (step.msgs.length + 1);
+    step.msgs.forEach(([t,m], j) => setTimeout(() => log(t, m), delay*(j+1)));
+    await new Promise(r => setTimeout(r, step.ms));
+    if (bars[i])   bars[i].className   = 'step-bar done';
+    if (labels[i]) labels[i].className = 'done';
+  }
+
+  APP.running = false; APP.done = true;
+  $('progressPct').textContent = '100%';
+  log('ok', '[DONE]  Mesh erfolgreich · 2.4M Polygone · Export bereit');
+  const fmt = (document.querySelector('.format-card.selected .fmt-name')||{textContent:'.OBJ'}).textContent.trim();
+  log('hi',  `[READY] Bali_Guardian_Scan_v1${fmt} — bereit zum Herunterladen`);
+  refreshQuality(photoCount + 8);
+
+  btn.textContent = '⬇  EXPORT HERUNTERLADEN';
+  btn.disabled = false; btn.style.opacity = '1';
+  btn.onclick = exportModel;
+
+  // "3D-Modell laden" Button einblenden
+  const btnLoad = $('btnLoadModel');
+  if (btnLoad) btnLoad.style.display = 'block';
+  log('info', '[3D-VIEWER] → Klicke "3D-MODELL IN VIEWER LADEN" um das Mesh anzuzeigen');
+}
+
+// ── Export ─────────────────────────────────────────────────────
+function exportModel() {
+  if (!APP.done) return;
+  const fmt = (document.querySelector('.format-card.selected .fmt-name')||{textContent:'.OBJ'}).textContent.trim();
+  log('hi', `[EXPORT] ${fmt} wird finalisiert...`);
+  setTimeout(() => {
+    log('ok', `[EXPORT] Bali_Guardian_Scan_v1${fmt} fertig — Download startet`);
+    const blob = new Blob([`# FORM3D Export\n# Model: Bali_Guardian_Scan_v1\n# Format: ${fmt}\n`],{type:'text/plain'});
+    const a    = document.createElement('a');
+    a.href = URL.createObjectURL(blob); a.download = `Bali_Guardian_Scan_v1${fmt.toLowerCase()}`; a.click();
+    URL.revokeObjectURL(a.href);
+  }, 900);
+}
+
+// ── Preview ────────────────────────────────────────────────────
+function previewResult() {
+  log('info','[PREVIEW] Niedrig-Auflösung Vorschau (512px Textur)...');
+  setTimeout(() => {
+    log('ok','[PREVIEW] Vorschau bereit — Modell rotiert im Viewport');
+    const sp = document.querySelector('.cylinder-spinner');
+    if (sp) { sp.style.animationDuration='8s'; setTimeout(()=>{ sp.style.animationDuration='22s'; },3000); }
+  }, 1200);
+}
+
+// ── Idle log ───────────────────────────────────────────────────
+const IDLE = [
+  ['hi',  '[NeRF]  Epoch 1480/5000 · Loss: 0.0021 · PSNR: 35.1 dB'],
+  ['info','[GPU]   Temp: 74°C · Auslastung: 62% · VRAM: 9.8/16 GB'],
+  ['ok',  '[SfM]   Bundle Adjustment stabil · RMS: 0.36 px'],
+  ['info','[MEM]   RAM: 18.2/32 GB · Swap: 0 GB'],
+  ['hi',  '[NeRF]  Epoch 1720/5000 · Loss: 0.0019 · PSNR: 35.8 dB'],
+  ['warn','[COVER] Unterseite: schwache Abdeckung (< 3 Bilder)'],
+  ['ok',  '[FEAT]  Feature-Cache · 646.800 Keypoints verfügbar'],
+  ['info','[GPU]   FPS: 60 · Render-Queue: 0 · CUDA-Kerne: 9728'],
+];
+let idleIdx = 0;
+setInterval(() => {
+  if (!APP.running) { log(IDLE[idleIdx%IDLE.length][0], IDLE[idleIdx%IDLE.length][1]); idleIdx++; }
+}, 3800);
+
+// ── Default photos ─────────────────────────────────────────────
+function loadDefaultPhotos() {
+  const n = 70;
+  renderGrid(Array.from({length:n},(_,i) => ({
+    src:   `photos/IMG_${6230+i}.JPG`,
+    angle: Math.round((i/n)*360) + '°',
+  })));
+  updateCounter(n);
+  log('hi',  '[IMPORT] 70 Bilder geladen · Ø 12 MP · 4.1 GB gesamt');
+  setTimeout(() => {
+    log('ok', '[EXIF]   f=24mm · ISO 64–200 · 70 gültige Bilder');
+    refreshQuality(70); refreshCamDots(70);
+  }, 900);
+}
+
+// ── Init ───────────────────────────────────────────────────────
+window.addEventListener('DOMContentLoaded', () => {
+  initUpload();
+  initSliders();
+  resizeCanvas();
+  window.addEventListener('resize', resizeCanvas);
+  drawCloud();
+  refreshCamDots(70);
+  // Probe for photos/ folder
+  const probe = new Image();
+  probe.onload  = loadDefaultPhotos;
+  probe.onerror = () => log('info','[READY] Bilder per Drag & Drop oder Klick importieren');
+  probe.src     = 'photos/IMG_6230.JPG';
+});
+</script>
+<input type="file" id="fileInput" multiple accept="image/*" style="display:none">
+<input type="file" id="modelFileInput" accept=".stl,.obj" style="display:none">
+</body>
+</html>

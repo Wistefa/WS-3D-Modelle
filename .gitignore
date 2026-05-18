@@ -1,0 +1,17 @@
+# Compiled binaries
+reconstruct
+convert_model
+
+# Large model files (tracked via Git LFS or stored separately)
+*.usdz
+*.obj
+*.mtl
+*.stl
+Texture_*.png
+
+# Photos (zu groß für GitHub, 383 MB)
+photos/
+
+# macOS
+.DS_Store
+**/.DS_Store
