@@ -6,7 +6,6 @@ convert_model
 *.usdz
 *.obj
 *.mtl
-*.stl
 Texture_*.png
 
 # Photos (zu groß für GitHub, 383 MB)
