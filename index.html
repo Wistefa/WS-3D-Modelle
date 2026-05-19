@@ -651,6 +651,18 @@ input[type=file] { display: none; }
       </div>
       <div class="opt-row">
         <div class="opt-label">
+          <span>VERFEINERUNG</span>
+          <span class="opt-val-wrap">
+            <input type="number" id="subdivideVal" min="0" max="300" value="0" disabled
+                   oninput="onSubdivideInput(this.value)">
+            <span class="opt-pct">%</span>
+          </span>
+        </div>
+        <input type="range" id="subdivideSlider" min="0" max="300" value="0" step="10" disabled
+               oninput="onSubdivideSlider(this.value)">
+      </div>
+      <div class="opt-row">
+        <div class="opt-label">
           <span>GLÄTTUNG</span>
           <span class="opt-val" id="smoothVal">0</span>
         </div>
@@ -703,10 +715,12 @@ let origGeo = null; // unverändertes Original (aus STL-Datei)
 const snapshots = [];
 
 function enableOptControls() {
-  document.getElementById('decimateSlider').disabled = false;
-  document.getElementById('decimateVal').disabled    = false;
-  document.getElementById('smoothSlider').disabled   = false;
-  document.getElementById('btnApply').disabled       = false;
+  document.getElementById('decimateSlider').disabled  = false;
+  document.getElementById('decimateVal').disabled     = false;
+  document.getElementById('subdivideSlider').disabled = false;
+  document.getElementById('subdivideVal').disabled    = false;
+  document.getElementById('smoothSlider').disabled    = false;
+  document.getElementById('btnApply').disabled        = false;
   document.getElementById('btnSnapshot').disabled    = false;
 }
 
@@ -718,6 +732,14 @@ function onDecimateSlider(v) {
 function onDecimateInput(v) {
   const val = Math.min(90, Math.max(0, parseInt(v) || 0));
   document.getElementById('decimateSlider').value = val;
+}
+function onSubdivideSlider(v) {
+  const val = Math.min(300, Math.max(0, parseInt(v) || 0));
+  document.getElementById('subdivideVal').value = val;
+}
+function onSubdivideInput(v) {
+  const val = Math.min(300, Math.max(0, parseInt(v) || 0));
+  document.getElementById('subdivideSlider').value = val;
 }
 
 function saveSnapshot() {
@@ -897,11 +919,63 @@ function decimateVoxel(geo, keepRatio, avgEdge) {
   return newGeo;
 }
 
+// Mesh-Verfeinerung durch Midpoint-Subdivision:
+// Jedes Dreieck → 4 kleinere Dreiecke (pro Iteration ×4 Polygone).
+// Partial: nur die größten Dreiecke werden aufgeteilt → gleichmäßige Verfeinerung.
+// increasePct=100 → 2× Dreiecke, increasePct=300 → 4× Dreiecke (eine vollständige Iteration).
+function subdivideMesh(geo, increasePct) {
+  if (increasePct <= 0) return geo.clone ? geo.clone() : geo;
+  const pos  = geo.attributes.position;
+  const idxA = geo.index ? geo.index.array : null;
+  const F    = idxA ? idxA.length/3 : pos.count/3;
+
+  // Anteil der aufzuteilenden Dreiecke: bei 300% alle, bei 100% ein Drittel
+  const F_sub = Math.min(F, Math.round(increasePct / 300 * F));
+
+  // Dreiecke nach Fläche sortieren (größte zuerst → grobe Bereiche werden verfeinert)
+  const tri_areas = new Float64Array(F);
+  for (let t = 0; t < F; t++) {
+    const ia=idxA?idxA[t*3]:t*3, ib=idxA?idxA[t*3+1]:t*3+1, ic=idxA?idxA[t*3+2]:t*3+2;
+    const ax=pos.getX(ib)-pos.getX(ia), ay=pos.getY(ib)-pos.getY(ia), az=pos.getZ(ib)-pos.getZ(ia);
+    const bx=pos.getX(ic)-pos.getX(ia), by=pos.getY(ic)-pos.getY(ia), bz=pos.getZ(ic)-pos.getZ(ia);
+    tri_areas[t] = (ay*bz-az*by)**2 + (az*bx-ax*bz)**2 + (ax*by-ay*bx)**2;
+  }
+  const order = Array.from({length:F},(_,i)=>i).sort((a,b)=>tri_areas[b]-tri_areas[a]);
+  const doSub = new Uint8Array(F);
+  for (let i = 0; i < F_sub; i++) doSub[order[i]] = 1;
+
+  // Aufgeteilte Dreiecke ausgeben
+  const nPos = [], nIdx = []; let nv = 0;
+  for (let t = 0; t < F; t++) {
+    const ia=idxA?idxA[t*3]:t*3, ib=idxA?idxA[t*3+1]:t*3+1, ic=idxA?idxA[t*3+2]:t*3+2;
+    const ax=pos.getX(ia),ay=pos.getY(ia),az=pos.getZ(ia);
+    const bx=pos.getX(ib),by=pos.getY(ib),bz=pos.getZ(ib);
+    const cx=pos.getX(ic),cy=pos.getY(ic),cz=pos.getZ(ic);
+    if (doSub[t]) {
+      const mx=(ax+bx)/2,my=(ay+by)/2,mz=(az+bz)/2; // M_AB
+      const nx=(bx+cx)/2,ny=(by+cy)/2,nz=(bz+cz)/2; // M_BC
+      const ox=(ax+cx)/2,oy=(ay+cy)/2,oz=(az+cz)/2; // M_AC
+      nPos.push(ax,ay,az,mx,my,mz,ox,oy,oz); nIdx.push(nv,nv+1,nv+2); nv+=3;
+      nPos.push(mx,my,mz,bx,by,bz,nx,ny,nz); nIdx.push(nv,nv+1,nv+2); nv+=3;
+      nPos.push(ox,oy,oz,nx,ny,nz,cx,cy,cz); nIdx.push(nv,nv+1,nv+2); nv+=3;
+      nPos.push(mx,my,mz,nx,ny,nz,ox,oy,oz); nIdx.push(nv,nv+1,nv+2); nv+=3;
+    } else {
+      nPos.push(ax,ay,az,bx,by,bz,cx,cy,cz); nIdx.push(nv,nv+1,nv+2); nv+=3;
+    }
+  }
+  const newGeo = new THREE.BufferGeometry();
+  newGeo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(nPos), 3));
+  newGeo.setIndex(nIdx);
+  newGeo.computeVertexNormals();
+  return newGeo;
+}
+
 function applyOptimizations() {
   if (!origGeo) return;
-  const decimatePct = parseInt(document.getElementById('decimateSlider').value);
-  const smoothIter  = parseInt(document.getElementById('smoothSlider').value);
-  if (decimatePct === 0 && smoothIter === 0) { resetOptimizations(); return; }
+  const decimatePct  = parseInt(document.getElementById('decimateSlider').value);
+  const subdividePct = parseInt(document.getElementById('subdivideSlider').value);
+  const smoothIter   = parseInt(document.getElementById('smoothSlider').value);
+  if (decimatePct === 0 && subdividePct === 0 && smoothIter === 0) { resetOptimizations(); return; }
 
   document.getElementById('btnApply').disabled = true;
   setOptStatus('Mesh wird indexiert...');
@@ -944,7 +1018,13 @@ function applyOptimizations() {
         geo = decimateVoxel(geo, 1 - decimatePct / 100, avgEdge);
       }
 
-      // 4. Mesh austauschen
+      // 5. Verfeinern (Midpoint-Subdivision: größte Dreiecke werden aufgeteilt)
+      if (subdividePct > 0) {
+        setOptStatus(`Verfeinerung +${subdividePct}%...`);
+        geo = subdivideMesh(geo, subdividePct);
+      }
+
+      // Mesh austauschen
       T.mesh.geometry.dispose();
       T.mesh.geometry = geo;
 
@@ -985,11 +1065,13 @@ function resetOptimizations() {
   document.getElementById('hudPoly').textContent  = polys.toLocaleString('de-DE');
   document.getElementById('infoPoly').textContent = polys.toLocaleString('de-DE');
   document.getElementById('hdrPolyCount').textContent = polys.toLocaleString('de-DE') + ' POLY';
-  document.getElementById('decimateSlider').value = 0;
-  document.getElementById('smoothSlider').value   = 0;
-  document.getElementById('decimateVal').value = 0;
-  document.getElementById('smoothVal').textContent   = '0';
-  document.getElementById('btnReset').style.display  = 'none';
+  document.getElementById('decimateSlider').value  = 0;
+  document.getElementById('decimateVal').value      = 0;
+  document.getElementById('subdivideSlider').value  = 0;
+  document.getElementById('subdivideVal').value     = 0;
+  document.getElementById('smoothSlider').value     = 0;
+  document.getElementById('smoothVal').textContent  = '0';
+  document.getElementById('btnReset').style.display = 'none';
   setOptStatus('');
 
   T.mesh.updateMatrixWorld(true);
@@ -1259,9 +1341,11 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   setOptStatus('');
   document.getElementById('btnReset').style.display = 'none';
   document.getElementById('decimateSlider').value   = 0;
+  document.getElementById('decimateVal').value      = 0;
+  document.getElementById('subdivideSlider').value  = 0;
+  document.getElementById('subdivideVal').value     = 0;
   document.getElementById('smoothSlider').value     = 0;
-  document.getElementById('decimateVal').value = 0;
-  document.getElementById('smoothVal').textContent   = '0';
+  document.getElementById('smoothVal').textContent  = '0';
 
   // Druckgröße aktivieren und mit 100 mm vorbelegen
   const inp = document.getElementById('printHeight');
