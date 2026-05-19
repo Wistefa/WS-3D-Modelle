@@ -2,16 +2,25 @@
 
 Photogrammetrie-App für Apple M-Series Macs. Aus 70 iPhone-Fotos wird automatisch ein druckfertiges 3D-Modell erzeugt.
 
-![App Screenshot](screenshots/app-01-start.png)
-
 ## Features
 
 - **Foto-Import**: Drag & Drop oder Datei-Picker — JPG, JPEG, PNG, HEIC
-- **Photogrammetrie**: Apple RealityKit `PhotogrammetrySession` (Neural Engine + Metal) 
+- **Photogrammetrie**: Apple RealityKit `PhotogrammetrySession` (Neural Engine + Metal)
 - **3D-Viewer**: Three.js mit OrbitControls — STL & OBJ laden, drehen, zoomen
 - **Mesh-Ansicht**: Wireframe-Modus mit 4-Punkt-Beleuchtung
-- **Export**: USDZ (AR Quick Look), OBJ (Blender/Maya), STL (3D-Druck)
+- **Export**: USDZ (AR Quick Look), OBJ (Blender/Maya), STL (3D-Druck) — inkl. optimierter Versionen
 - **Echtzeit-Log**: Fortschrittsanzeige mit Phase-Info während der Rekonstruktion
+
+### Mesh-Optimierung
+
+| Funktion | Details |
+|---|---|
+| **Polygon-Reduktion** | Vertex-Voxel-Grid mit Binärsuche — 1–90 %, kein Artefakt, kein Fragment |
+| **Verfeinerung** | Midpoint-Subdivision — größte Dreiecke werden aufgeteilt, +10–300 % |
+| **Glättung** | Laplacian Smoothing — räumliche Hash-Adjazenz (funktioniert auf Soup- und Manifold-Mesh) |
+| **Boden entfernen** | Horizontaler Trim-Slider für saubere Druckbasis |
+| **Druckgröße** | Maßstabsgerechte Berechnung in mm (Breite × Tiefe × Höhe) |
+| **Snapshots** | Zwischenstände speichern und vergleichen |
 
 ## Projekt-Inhalt
 
@@ -31,12 +40,12 @@ WS 3D-Modelle/
 
 ```bash
 open index.html
-# oder per Browser: file:///Users/.../WS\ 3D-Modelle/index.html
+# oder lokal per HTTP-Server:
+python3 -m http.server 3000 --directory "WS 3D-Modelle"
+# → http://localhost:3000/index.html
 ```
 
-Kein Server, kein Build. Einfach `index.html` im Browser öffnen.
-
-Der Viewer lädt `bali_guardian.stl` automatisch (wenn im gleichen Ordner), alternativ über den Button **⬡ 3D-MODELL IN VIEWER LADEN**.
+Der Viewer lädt `bali_guardian.stl` automatisch (wenn im gleichen Ordner), alternativ über den Button **⬡ MODELL LADEN**.
 
 ## Eigene Fotos rekonstruieren
 
@@ -49,7 +58,6 @@ Der Viewer lädt `bali_guardian.stl` automatisch (wenn im gleichen Ordner), alte
 ### 2. Swift CLI kompilieren
 
 ```bash
-# Einmalig kompilieren
 swiftc -framework RealityKit -framework Foundation reconstruct.swift -o reconstruct
 swiftc -framework ModelIO -framework Foundation convert_model.swift -o convert_model
 ```
@@ -83,6 +91,14 @@ STL-Datei per Button laden oder als `bali_guardian.stl` neben `index.html` ableg
 | 3D-Konvertierung | Apple ModelIO `MDLAsset` |
 | Shader | MeshPhongMaterial, ACESFilmicToneMapping |
 
+## Algorithmen
+
+**Vertex-Voxel-Dezimierung**: Vertices in derselben Voxel-Zelle werden zu ihrem Schwerpunkt zusammengefasst. Dreiecke mit zwei oder mehr Vertices in derselben Zelle werden entfernt. Zellgröße per Binärsuche kalibriert, sodass genau der gewünschte Poly-Anteil überlebt. Funktioniert auf reinen Soup-Meshes (iPhone STL: 157.002 Dreiecke, alle Vertices einzigartig).
+
+**Midpoint-Subdivision**: Jedes ausgewählte Dreieck wird in 4 Teildreiecke zerlegt (A–M_AB–M_AC, M_AB–B–M_BC, M_AC–M_BC–C, M_AB–M_BC–M_AC). Die größten Dreiecke werden zuerst unterteilt. Kalibriert auf exakten Prozentsatz: +100 % → 2× Polygone, +300 % → 4× Polygone.
+
+**Laplacian Smoothing mit räumlicher Hash-Adjazenz**: Erkennt Soup-Meshes (n/F > 2.5) automatisch und baut Nachbarschaftsbeziehungen über einen räumlichen Hash auf (Radius = Ø-Kantenlänge × 1.2). Verhindert das Kollabieren zur Punktewolke, das bei rein Index-basierter Adjazenz auf Soup-Meshes entsteht.
+
 ## Voraussetzungen
 
 - macOS 12.0+ (Monterey oder neuer) — für RealityKit
@@ -94,6 +110,7 @@ STL-Datei per Button laden oder als `bali_guardian.stl` neben `index.html` ableg
 Das enthaltene Modell ist ein **Balinesischer Steinwächter** (Dvarapala), fotografiert mit 70 iPhone-Fotos im Halbkreis. Rekonstruiert in ~17 Minuten auf einem M4 MacBook Pro.
 
 - Polygon-Auflösung: `detail: .full`
+- 157.002 Polygone, 471.006 Vertices
 - Texturiertes PBR-Material (4 Texture-Maps)
 - USDZ direkt in iOS/macOS AR Quick Look öffenbar
 
