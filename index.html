@@ -796,32 +796,71 @@ function setOptStatus(msg) {
   document.getElementById('optStatus').textContent = msg;
 }
 
-// Laplacian Smoothing auf indizierter Geometrie
-function smoothGeometry(geo, iterations, strength) {
-  const pos = geo.attributes.position;
-  const idx = geo.index.array;
-  const n   = pos.count;
+// Laplacian Smoothing — funktioniert auf Soup-Mesh (räumliche Hash-Adjazenz)
+// und auf indexiertem Manifold-Mesh (Index-Adjazenz).
+function smoothGeometry(geo, iterations, strength, avgEdge) {
+  const pos    = geo.attributes.position;
+  const idxArr = geo.index ? geo.index.array : null;
+  const n      = pos.count;
+  const F      = idxArr ? idxArr.length / 3 : n / 3;
+  // Soup: jedes Dreieck hat eigene Vertices (n ≈ 3F). Manifold: n ≈ 0.5F.
+  const isSoup = (n / F > 2.5);
 
-  // Adjazenz aufbauen
-  const adj = [];
-  for (let i = 0; i < n; i++) adj.push([]);
-  for (let i = 0; i < idx.length; i += 3) {
-    const a=idx[i], b=idx[i+1], c=idx[i+2];
-    adj[a].push(b,c); adj[b].push(a,c); adj[c].push(a,b);
+  let adj;
+  if (!isSoup && idxArr) {
+    // Indexiertes Mesh: Index-basierte Adjazenz (schnell, korrekt)
+    adj = [];
+    for (let i = 0; i < n; i++) adj.push([]);
+    for (let i = 0; i < idxArr.length; i += 3) {
+      const a = idxArr[i], b = idxArr[i+1], c = idxArr[i+2];
+      adj[a].push(b, c); adj[b].push(a, c); adj[c].push(a, b);
+    }
+    for (let i = 0; i < n; i++) adj[i] = [...new Set(adj[i])];
+  } else {
+    // Soup-Mesh: räumliche Hash-Adjazenz — findet Nachbarn über Dreiecke hinweg
+    const R  = avgEdge * 1.2;
+    const R2 = R * R;
+    const inv = 1 / R;
+    const hash = new Map();
+    for (let i = 0; i < n; i++) {
+      const cx = Math.floor(pos.getX(i) * inv);
+      const cy = Math.floor(pos.getY(i) * inv);
+      const cz = Math.floor(pos.getZ(i) * inv);
+      const k  = `${cx},${cy},${cz}`;
+      if (!hash.has(k)) hash.set(k, []);
+      hash.get(k).push(i);
+    }
+    adj = new Array(n).fill(null).map(() => []);
+    for (let i = 0; i < n; i++) {
+      const vx = pos.getX(i), vy = pos.getY(i), vz = pos.getZ(i);
+      const cx = Math.floor(vx * inv);
+      const cy = Math.floor(vy * inv);
+      const cz = Math.floor(vz * inv);
+      for (let dx = -1; dx <= 1; dx++) {
+        for (let dy = -1; dy <= 1; dy++) {
+          for (let dz = -1; dz <= 1; dz++) {
+            const bucket = hash.get(`${cx+dx},${cy+dy},${cz+dz}`);
+            if (!bucket) continue;
+            for (const j of bucket) {
+              if (j === i) continue;
+              const ex = vx - pos.getX(j), ey = vy - pos.getY(j), ez = vz - pos.getZ(j);
+              if (ex*ex + ey*ey + ez*ez <= R2) adj[i].push(j);
+            }
+          }
+        }
+      }
+    }
   }
-  // Duplikate entfernen
-  for (let i = 0; i < n; i++) adj[i] = [...new Set(adj[i])];
 
   const nx = new Float32Array(n);
   const ny = new Float32Array(n);
   const nz = new Float32Array(n);
-
   for (let iter = 0; iter < iterations; iter++) {
     for (let i = 0; i < n; i++) {
       const ns = adj[i];
-      if (!ns.length) { nx[i]=pos.getX(i); ny[i]=pos.getY(i); nz[i]=pos.getZ(i); continue; }
-      let cx=0, cy=0, cz=0;
-      for (const j of ns) { cx+=pos.getX(j); cy+=pos.getY(j); cz+=pos.getZ(j); }
+      if (!ns.length) { nx[i] = pos.getX(i); ny[i] = pos.getY(i); nz[i] = pos.getZ(i); continue; }
+      let cx = 0, cy = 0, cz = 0;
+      for (const j of ns) { cx += pos.getX(j); cy += pos.getY(j); cz += pos.getZ(j); }
       const cnt = ns.length;
       nx[i] = pos.getX(i) + strength * (cx/cnt - pos.getX(i));
       ny[i] = pos.getY(i) + strength * (cy/cnt - pos.getY(i));
@@ -1004,24 +1043,22 @@ function applyOptimizations() {
       // 2. Direkt auf origGeo arbeiten (kein mergeVertices nötig)
       let geo = origGeo.clone ? origGeo.clone() : origGeo;
 
-      // 3. Glätten
-      if (smoothIter > 0) {
-        setOptStatus(`Glättung läuft (${smoothIter} Durchläufe)...`);
-        // Für Glättung einmalig indexieren
-        geo = THREE.BufferGeometryUtils.mergeVertices(geo, avgEdge * 0.1);
-        smoothGeometry(geo, smoothIter, 0.5);
-      }
-
-      // 4. Dezimieren (Vertex-Voxel: glattes Ergebnis, kein Artefakt, Soup- und Manifold-Mesh)
+      // 3. Dezimieren (Vertex-Voxel: glattes Ergebnis, kein Artefakt, Soup- und Manifold-Mesh)
       if (decimatePct > 0) {
         setOptStatus(`Polygon-Reduktion auf ${100-decimatePct}%...`);
         geo = decimateVoxel(geo, 1 - decimatePct / 100, avgEdge);
       }
 
-      // 5. Verfeinern (Midpoint-Subdivision: größte Dreiecke werden aufgeteilt)
+      // 4. Verfeinern (Midpoint-Subdivision: größte Dreiecke werden aufgeteilt)
       if (subdividePct > 0) {
         setOptStatus(`Verfeinerung +${subdividePct}%...`);
         geo = subdivideMesh(geo, subdividePct);
+      }
+
+      // 5. Glätten — nach Dezimierung/Subdivision für korrekte Topologie
+      if (smoothIter > 0) {
+        setOptStatus(`Glättung läuft (${smoothIter} Durchläufe)...`);
+        smoothGeometry(geo, smoothIter, 0.5, avgEdge);
       }
 
       // Mesh austauschen
@@ -1287,7 +1324,7 @@ function toggleWireframe() {
   wireframe = !wireframe;
   if (T.mesh) {
     T.mesh.material.wireframe = wireframe;
-    T.mesh.material.color.setHex(wireframe ? 0xa8ff3e : 0x9a8b7a);
+    T.mesh.material.color.setHex(wireframe ? 0xa8ff3e : 0xfaf8f5);
   }
   document.getElementById('btnWire').classList.toggle('active', wireframe);
 }
@@ -1312,7 +1349,7 @@ function loadSTLBuffer(buffer, name, sizeBytes) {
   // Original speichern für Optimierungs-Reset
   origGeo = geo.clone();
 
-  const mat  = new THREE.MeshPhongMaterial({ color: 0x9a8b7a, specular: 0x222222, shininess: 30 });
+  const mat  = new THREE.MeshPhongMaterial({ color: 0xfaf8f5, specular: 0x444444, shininess: 40 });
   T.mesh = new THREE.Mesh(geo, mat);
 
   // Zentrieren & skalieren auf 200 Einheiten
