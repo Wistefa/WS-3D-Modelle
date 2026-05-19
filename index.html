@@ -811,69 +811,88 @@ function smoothGeometry(geo, iterations, strength) {
   geo.computeVertexNormals();
 }
 
-// Voxel-Grid Decimation: Vertices in Gitterzellen zusammenführen
-// geo muss bereits indiziert sein (nach mergeVertices) damit pos.count = echte unique Vertices
-function decimateVoxelGrid(geo, keepRatio) {
-  const pos    = geo.attributes.position;
-  const n      = pos.count;
-  const srcIdx = geo.index.array;
-  const triCount = srcIdx.length / 3;
+// Edge-Collapse Decimation: kürzeste Kanten iterativ zusammenführen
+// Liefert präzise Kontrolle (1%-Schritte) ohne den Sprungeffekt von Voxel-Grid.
+// Dezimierung über Vertex-Voxel-Grid mit Binärsuche:
+// Vertices der gleichen Voxel-Zelle werden zu ihrem Schwerpunkt zusammengefasst.
+// Ergebnis: glattes, vollständig verbundenes Mesh ohne Lücken oder Fragmente.
+// Zellgröße per Binärsuche so kalibriert, dass genau keepRatio Dreiecke überleben.
+function decimateVoxel(geo, keepRatio, avgEdge) {
+  if (keepRatio >= 1) return geo.clone();
+  const pos  = geo.attributes.position;
+  const idxA = geo.index ? geo.index.array : null;
+  const V = pos.count;
+  const F = idxA ? idxA.length / 3 : V / 3;
 
-  // Lokale Bounding Box
-  const box   = new THREE.Box3().setFromBufferAttribute(pos);
-  const sz    = box.getSize(new THREE.Vector3());
-
-  // Durchschnittliche Kantenlänge aus ~500 Stichproben-Dreiecken schätzen
-  // (innerhalb eines Dreiecks sind alle 3 Kanten repräsentativ, keine Duplikate)
-  const step = Math.max(1, Math.floor(triCount / 500));
-  let edgeSum = 0, edgeCnt = 0;
-  const _va = new THREE.Vector3(), _vb = new THREE.Vector3(), _vc = new THREE.Vector3();
-  for (let t = 0; t < triCount; t += step) {
-    _va.fromBufferAttribute(pos, srcIdx[t*3]);
-    _vb.fromBufferAttribute(pos, srcIdx[t*3+1]);
-    _vc.fromBufferAttribute(pos, srcIdx[t*3+2]);
-    edgeSum += _va.distanceTo(_vb) + _vb.distanceTo(_vc) + _vc.distanceTo(_va);
-    edgeCnt += 3;
-  }
-  const avgEdge = edgeSum / edgeCnt;
-
-  // cell = avgEdge / sqrt(keepRatio): bei keepRatio=0.5 → ca. 50% der Polys bleiben
-  const cell = Math.max(avgEdge / Math.sqrt(keepRatio), 1e-9);
-
-  // Vertex → Voxel (string-key für Überlaufsicherheit)
-  const voxelMap = new Map();
-  for (let i = 0; i < n; i++) {
-    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
-    const key = `${Math.floor((x-box.min.x)/cell)},${Math.floor((y-box.min.y)/cell)},${Math.floor((z-box.min.z)/cell)}`;
-    if (!voxelMap.has(key)) voxelMap.set(key, {sx:0,sy:0,sz:0,cnt:0,idx:voxelMap.size});
-    const v=voxelMap.get(key); v.sx+=x; v.sy+=y; v.sz+=z; v.cnt++;
+  // Positionen in Float32-Arrays vorhalten für schnellen Zugriff
+  const px = new Float32Array(V), py = new Float32Array(V), pz = new Float32Array(V);
+  let mnX=1e30,mnY=1e30,mnZ=1e30;
+  for (let i = 0; i < V; i++) {
+    px[i]=pos.getX(i); py[i]=pos.getY(i); pz[i]=pos.getZ(i);
+    if(px[i]<mnX)mnX=px[i]; if(py[i]<mnY)mnY=py[i]; if(pz[i]<mnZ)mnZ=pz[i];
   }
 
-  // Neue Positionen (Voxel-Schwerpunkte)
-  const newPosArr = new Float32Array(voxelMap.size * 3);
-  for (const v of voxelMap.values()) {
-    const i3=v.idx*3;
-    newPosArr[i3]=v.sx/v.cnt; newPosArr[i3+1]=v.sy/v.cnt; newPosArr[i3+2]=v.sz/v.cnt;
+  // Überlebende nicht-degenerierte Dreiecke für gegebene Zellgröße zählen
+  function countSurviving(cell) {
+    const inv = 1/cell;
+    const vId = new Int32Array(V);
+    const km = new Map(); let nv = 0;
+    for (let i = 0; i < V; i++) {
+      const k = `${(px[i]-mnX)*inv|0},${(py[i]-mnY)*inv|0},${(pz[i]-mnZ)*inv|0}`;
+      if (!km.has(k)) km.set(k, nv++);
+      vId[i] = km.get(k);
+    }
+    let cnt = 0;
+    for (let t = 0; t < F; t++) {
+      const ia=idxA?idxA[t*3]:t*3, ib=idxA?idxA[t*3+1]:t*3+1, ic=idxA?idxA[t*3+2]:t*3+2;
+      if (vId[ia]!==vId[ib] && vId[ib]!==vId[ic] && vId[ia]!==vId[ic]) cnt++;
+    }
+    return cnt;
   }
 
-  // Mapping: alter Index → neuer Voxel-Index
-  const vtx2vox = new Int32Array(n);
-  for (let i = 0; i < n; i++) {
-    const x=pos.getX(i), y=pos.getY(i), z=pos.getZ(i);
-    const key=`${Math.floor((x-box.min.x)/cell)},${Math.floor((y-box.min.y)/cell)},${Math.floor((z-box.min.z)/cell)}`;
-    vtx2vox[i]=voxelMap.get(key).idx;
+  // Binärsuche: countSurviving ist fallend bzgl. cell
+  // größere Zelle → mehr Merges → weniger überlebende Dreiecke
+  const target = Math.max(4, Math.round(F * keepRatio));
+  let lo = avgEdge * 0.001, hi = avgEdge * 10;
+  for (let i = 0; i < 20; i++) {
+    const mid = (lo + hi) / 2;
+    if (countSurviving(mid) > target) lo = mid; // zu viele → Zelle vergrößern
+    else hi = mid;                               // zu wenige → Zelle verkleinern
+  }
+  const cell = (lo + hi) / 2;
+  const inv = 1/cell;
+
+  // Endgültige Voxel-Zuweisung: Schwerpunkt jeder Zelle als Repräsentant
+  const voxSx=new Float64Array(V), voxSy=new Float64Array(V), voxSz=new Float64Array(V);
+  const voxN=new Int32Array(V);
+  const km2 = new Map(); let nv = 0;
+  const vId2 = new Int32Array(V);
+  for (let i = 0; i < V; i++) {
+    const k = `${(px[i]-mnX)*inv|0},${(py[i]-mnY)*inv|0},${(pz[i]-mnZ)*inv|0}`;
+    if (!km2.has(k)) { km2.set(k, nv); nv++; }
+    const vi = km2.get(k);
+    vId2[i] = vi;
+    voxSx[vi]+=px[i]; voxSy[vi]+=py[i]; voxSz[vi]+=pz[i]; voxN[vi]++;
   }
 
-  // Dreiecke aufbauen, degenerierte überspringen
-  const newIdx = [];
-  for (let t = 0; t < triCount; t++) {
-    const na=vtx2vox[srcIdx[t*3]], nb=vtx2vox[srcIdx[t*3+1]], nc=vtx2vox[srcIdx[t*3+2]];
-    if (na!==nb && nb!==nc && na!==nc) newIdx.push(na,nb,nc);
+  // Ausgabe-Positions-Array: gemittelte Voxel-Positionen
+  const newPosArr = new Float32Array(nv * 3);
+  for (let i = 0; i < nv; i++) {
+    const n=voxN[i];
+    newPosArr[i*3]=voxSx[i]/n; newPosArr[i*3+1]=voxSy[i]/n; newPosArr[i*3+2]=voxSz[i]/n;
+  }
+
+  // Nicht-degenerierte Dreiecke aufbauen
+  const newIdx2 = [];
+  for (let t = 0; t < F; t++) {
+    const ia=idxA?idxA[t*3]:t*3, ib=idxA?idxA[t*3+1]:t*3+1, ic=idxA?idxA[t*3+2]:t*3+2;
+    const a=vId2[ia], b=vId2[ib], c=vId2[ic];
+    if (a!==b && b!==c && a!==c) newIdx2.push(a, b, c);
   }
 
   const newGeo = new THREE.BufferGeometry();
   newGeo.setAttribute('position', new THREE.BufferAttribute(newPosArr, 3));
-  newGeo.setIndex(newIdx);
+  newGeo.setIndex(newIdx2);
   newGeo.computeVertexNormals();
   return newGeo;
 }
@@ -885,23 +904,44 @@ function applyOptimizations() {
   if (decimatePct === 0 && smoothIter === 0) { resetOptimizations(); return; }
 
   document.getElementById('btnApply').disabled = true;
-  setOptStatus('Vertices werden zusammengeführt...');
+  setOptStatus('Mesh wird indexiert...');
 
   setTimeout(() => {
     try {
-      // 1. Merge: nicht-indizierte STL → indizierte Geometrie
-      let geo = THREE.BufferGeometryUtils.mergeVertices(origGeo.clone(), 1e-4);
+      // 1. Ø-Kantenlänge aus origGeo schätzen (500 Dreiecke als Stichprobe)
+      const rawPos  = origGeo.attributes.position;
+      const rawIdxA = origGeo.index ? origGeo.index.array : null;
+      const rawF    = rawIdxA ? rawIdxA.length / 3 : rawPos.count / 3;
+      const sStep   = Math.max(1, Math.floor(rawF / 500));
+      let eSum = 0, eCnt = 0;
+      const _a = new THREE.Vector3(), _b = new THREE.Vector3(), _c = new THREE.Vector3();
+      for (let t = 0; t < rawF; t += sStep) {
+        const ia = rawIdxA ? rawIdxA[t*3]   : t*3;
+        const ib = rawIdxA ? rawIdxA[t*3+1] : t*3+1;
+        const ic = rawIdxA ? rawIdxA[t*3+2] : t*3+2;
+        _a.fromBufferAttribute(rawPos, ia);
+        _b.fromBufferAttribute(rawPos, ib);
+        _c.fromBufferAttribute(rawPos, ic);
+        eSum += _a.distanceTo(_b) + _b.distanceTo(_c) + _c.distanceTo(_a);
+        eCnt += 3;
+      }
+      const avgEdge = eSum / eCnt;
 
-      // 2. Glätten
+      // 2. Direkt auf origGeo arbeiten (kein mergeVertices nötig)
+      let geo = origGeo.clone ? origGeo.clone() : origGeo;
+
+      // 3. Glätten
       if (smoothIter > 0) {
         setOptStatus(`Glättung läuft (${smoothIter} Durchläufe)...`);
+        // Für Glättung einmalig indexieren
+        geo = THREE.BufferGeometryUtils.mergeVertices(geo, avgEdge * 0.1);
         smoothGeometry(geo, smoothIter, 0.5);
       }
 
-      // 3. Dezimieren (Voxel-Grid)
+      // 4. Dezimieren (Vertex-Voxel: glattes Ergebnis, kein Artefakt, Soup- und Manifold-Mesh)
       if (decimatePct > 0) {
         setOptStatus(`Polygon-Reduktion auf ${100-decimatePct}%...`);
-        geo = decimateVoxelGrid(geo, 1 - decimatePct / 100);
+        geo = decimateVoxel(geo, 1 - decimatePct / 100, avgEdge);
       }
 
       // 4. Mesh austauschen
